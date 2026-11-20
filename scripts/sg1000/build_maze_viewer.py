@@ -68,7 +68,7 @@ def title_assets(chr_data, logo, nes_palette):
     """Build independent Graphics II banks for a 24-row NES-logo title.
 
     Different NES palette attributes can apply to the same tile. Deduplicate
-    converted pattern/color pairs per 8-row TMS bank, not by NES tile ID.
+    converted pattern/color pairs globally so rows can move between TMS banks.
     """
     if len(logo) != 138 or len(nes_palette) != 16:
         raise ValueError('title requires the 138-byte logo and 16-byte palette')
@@ -95,11 +95,11 @@ def title_assets(chr_data, logo, nes_palette):
     # Use the wordmark alone, with no trailing emblem or added T.
     for x in range(8):
         cells[22][12 + x] = (0x23 + x, 1)
-    banks_pattern, banks_color, names = bytearray(), bytearray(), bytearray()
+    names = bytearray()
+    patterns = bytearray(2048)
+    colors = bytearray([0x11] * 2048)
+    unique = {(bytes(8), bytes([0x11] * 8)): 0}
     for bank in range(3):
-        patterns = bytearray(2048)
-        colors = bytearray([0x11] * 2048)
-        unique = {(bytes(8), bytes([0x11] * 8)): 0}
         for row in cells[bank * 8:bank * 8 + 8]:
             for cell in row:
                 if cell is None:
@@ -123,9 +123,7 @@ def title_assets(chr_data, logo, nes_palette):
                     patterns[index * 8:(index + 1) * 8] = p
                     colors[index * 8:(index + 1) * 8] = c
                 names.append(unique[key])
-        banks_pattern.extend(patterns)
-        banks_color.extend(colors)
-    return bytes(banks_pattern), bytes(banks_color), bytes(names)
+    return bytes(patterns) * 3, bytes(colors) * 3, bytes(names)
 
 
 # NES sprite composition frames 01..09 from tbl_actor_sprite_tiles and

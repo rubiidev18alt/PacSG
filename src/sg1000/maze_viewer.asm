@@ -52,12 +52,94 @@ setup_register_loop:
     ld hl,title_color_data
     ld bc,6144
     call write_vram_block
+    ; Both name tables start black. R2=6 is visible; R2=7 is the
+    ; offscreen staging table at 1C00. Sprite attributes remain at 1B00.
     ld de,6144
-    call set_vram_write
-    ld hl,title_name_data
-    ld bc,768
-    call write_vram_block
+    call title_clear_table
+    ld de,7168
+    call title_clear_table
+    xor a
+    ld (49877),a              ; number of revealed rows
+    ld a,7
+    ld (49878),a              ; staging name-table register value
     call display_on
+
+; TMS9918 has no fine vertical scroll. Build the next 8-pixel upward step in
+; the hidden name table, then swap at vblank every eight frames. This gives a
+; 192-frame scroll from black without writing the visible table mid-frame.
+title_scroll_prepare:
+    ld a,(49877)
+    cp 24
+    jr z,wait_start
+    inc a
+    ld (49877),a
+    ld b,a
+    ld a,(49878)
+    cp 7
+    ld de,7168
+    jr z,title_scroll_address_ready
+    ld de,6144
+ title_scroll_address_ready:
+    call set_vram_write
+    ld a,24
+    sub b
+    ld b,a
+    or a
+    jr z,title_scroll_copy
+    xor a
+ title_scroll_blank_row:
+    ld c,32
+ title_scroll_blank_cell:
+    out (190),a
+    dec c
+    jr nz,title_scroll_blank_cell
+    djnz title_scroll_blank_row
+ title_scroll_copy:
+    ld a,(49877)
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl                 ; revealed rows * 32
+    ld b,h
+    ld c,l
+    ld hl,title_name_data
+    call write_vram_block
+    ld b,8
+ title_scroll_wait:
+    in a,(191)
+    and 128
+    jr z,title_scroll_wait
+    in a,(220)
+    and 48
+    cp 48
+    jp nz,title_start_game     ; fire skips the animation
+    djnz title_scroll_wait
+    ld a,(49878)
+    out (191),a
+    ld a,130                  ; R2: swap the staged name table into view
+    out (191),a
+    ld a,(49878)
+    xor 1
+    ld (49878),a
+    jp title_scroll_prepare
+
+title_clear_table:
+    call set_vram_write
+    ld bc,768
+    xor a
+ title_clear_cell:
+    out (190),a
+    dec bc
+    ld a,b
+    or c
+    jr z,title_clear_done
+    xor a
+    jr title_clear_cell
+ title_clear_done:
+    ret
 
 wait_start:
     in a,(191)
@@ -67,10 +149,15 @@ wait_start:
     and 48                      ; either fire button, active low
     cp 48
     jr z,wait_start
+ title_start_game:
     ; Switch to the maze tiles while display is off.
     ld a,128
     out (191),a
     ld a,129
+    out (191),a
+    ld a,6                     ; restore gameplay name table after scrolling
+    out (191),a
+    ld a,130
     out (191),a
 
     ; Three Graphics II 256-pattern banks all use the same NES tile set.

@@ -9,7 +9,8 @@ unchanged on the SG-1000's Z80.
 
 ## Controls and current behavior
 
-Press either fire button at the title, then use joystick 1. Pac-Man continues
+The title starts on black and scrolls upward into view in eight-pixel steps;
+pressing either fire button skips the animation and starts play. Use joystick 1. Pac-Man continues
 in his current direction when the stick is released; he can reverse mid-tile
 and turns at tile centers. Near the top or bottom, the camera scrolls the maze
 while the HUD stays fixed: the 27-row NES maze is taller than the TMS9918's

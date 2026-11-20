@@ -26,7 +26,7 @@ class GameplayTests(unittest.TestCase):
 
     def new_game(self):
         cpu, vdp = make_machine(self.rom)
-        advance(cpu, vdp, 60)
+        advance(cpu, vdp, 210)
         vdp.pad = 0xef
         advance(cpu, vdp, 15)
         vdp.pad = 0xff

@@ -98,7 +98,7 @@ class ViewerTests(unittest.TestCase):
             rom = path.read_bytes()
         self.assertEqual(len(rom), 49152)
         cpu, vdp = make_machine(rom)
-        advance(cpu, vdp, 60)
+        advance(cpu, vdp, 210)
         self.assertEqual(vdp.registers, [2, 194, 6, 255, 3, 54, 7, 1])
         patterns, colors, names = title_assets(chr_data, logo, palette)
         self.assertEqual(vdp.ram[:6144], patterns)
@@ -115,6 +115,39 @@ class ViewerTests(unittest.TestCase):
             self.assertEqual(vdp.ram[off:off + 8], bytes(8))
             self.assertEqual(vdp.ram[8192 + off:8192 + off + 8], bytes([0x11] * 8))
 
+    def test_title_scroll_reveals_upward_and_fire_skips(self):
+        path = ROOT / 'pacman.nes'
+        if not path.is_file():
+            self.skipTest('no local NES ROM')
+        maze, chr_data, logo, palette, _ = assets_from_rom(path.read_bytes())
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'scroll.sg'
+            build(maze, chr_data, output, logo=logo, title_palette=palette)
+            rom = output.read_bytes()
+        patterns, colors, names = title_assets(chr_data, logo, palette)
+        self.assertEqual(patterns[:2048], patterns[2048:4096])
+        self.assertEqual(patterns[:2048], patterns[4096:])
+        self.assertEqual(colors[:2048], colors[2048:4096])
+        cpu, vdp = make_machine(rom)
+        advance(cpu, vdp, 1)
+        self.assertEqual(vdp.ram[6144:6912], bytes(768))
+        advance(cpu, vdp, 96)
+        visible = vdp.registers[2] * 1024
+        table = vdp.ram[visible:visible + 768]
+        # Eleven rows have risen into view, with the rest still black.
+        self.assertEqual(table[:13 * 32], bytes(13 * 32))
+        self.assertEqual(table[13 * 32:], names[:11 * 32])
+        advance(cpu, vdp, 110)
+        visible = vdp.registers[2] * 1024
+        self.assertEqual(vdp.ram[visible:visible + 768], names)
+
+        cpu, vdp = make_machine(rom)
+        advance(cpu, vdp, 5)
+        vdp.pad = 0xef
+        advance(cpu, vdp, 15)
+        self.assertEqual(vdp.registers[2], 6)
+        self.assertEqual(cpu.memory[0xc27e], 3)  # game initialized
+
     def test_real_rom_movement_pellets_walls_and_tunnel(self):
         path = ROOT / 'pacman.nes'
         if not path.is_file():
@@ -130,7 +163,7 @@ class ViewerTests(unittest.TestCase):
             build(maze, chr_data, path, logo=logo, title_palette=palette)
             rom = path.read_bytes()
         cpu, vdp = make_machine(rom)
-        advance(cpu, vdp, 60)
+        advance(cpu, vdp, 210)
         self.assertEqual(vdp.ram[6144:6912], title_assets(chr_data, logo, palette)[2])
         vdp.pad = 0xef
         advance(cpu, vdp, 15)
