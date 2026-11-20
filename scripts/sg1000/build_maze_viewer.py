@@ -85,11 +85,16 @@ def title_assets(chr_data, logo, nes_palette):
             attr = TITLE_ATTRIBUTES[(oy // 4 - 1) * 8 + ox // 4]
             shift = ((oy // 2) % 2) * 4 + ((ox // 2) % 2) * 2
             cells[y + 4][x + 5] = (logo[y * 23 + x], (attr >> shift) & 3)
-    for row, text in [(14, '1 PLAYER'), (17, 'PRESS BUTTON TO START')]:
+    for row, text in [(14, '1 PLAYER'), (16, 'PRESS BUTTON TO START'),
+                      (19, 'UNOFFICIAL FAN PORT,'), (20, 'NOT LICENSED BY')]:
         start = (32 - len(text)) // 2
         for x, character in enumerate(text):
             if character != ' ':
-                cells[row][start + x] = (ord(character), 0)
+                cells[row][start + x] = (256 if character == ',' else ord(character), 0)
+    # NES title logo tiles spell "namco" followed by a trademark emblem.
+    # Use the wordmark alone, with no trailing emblem or added T.
+    for x in range(8):
+        cells[22][12 + x] = (0x23 + x, 1)
     banks_pattern, banks_color, names = bytearray(), bytearray(), bytearray()
     for bank in range(3):
         patterns = bytearray(2048)
@@ -101,7 +106,14 @@ def title_assets(chr_data, logo, nes_palette):
                     names.append(0)
                     continue
                 tile, pal = cell
-                p, c, _ = convert(chr_data[tile * 16:(tile + 1) * 16], palettes[pal], True)
+                if tile == 256:  # comma absent from the NES title font
+                    p = bytes([0, 0, 0, 0, 0, 0x18, 0x18, 0x10])
+                    c = bytes([0x11] * 5 + [0xf1] * 3)
+                else:
+                    data = chr_data[tile * 16:(tile + 1) * 16]
+                    if tile == 0x2a:  # last wordmark tile: remove emblem at x>=60
+                        data = bytes(value & 0xf0 for value in data)
+                    p, c, _ = convert(data, palettes[pal], True)
                 key = (p, c)
                 if key not in unique:
                     index = len(unique)
@@ -153,6 +165,43 @@ def pacman_sprite_patterns(chr_data):
     return bytes(result)
 
 
+# Normal frames 0A..11 and frightened frames 1E..1F from the NES OAM tables.
+GHOST_FRAMES = (
+    ((0x18, 0x18, 0x19, 0x19), (0, 0x40, 0, 0x40)),
+    ((0x18, 0x18, 0x1a, 0x1a), (0, 0x40, 0, 0x40)),
+    ((0x1b, 0x1c, 0x1d, 0x1f), (0, 0, 0, 0)),
+    ((0x1b, 0x1c, 0x1e, 0x20), (0, 0, 0, 0)),
+    ((0x21, 0x21, 0x22, 0x22), (0, 0x40, 0, 0x40)),
+    ((0x21, 0x21, 0x23, 0x23), (0, 0x40, 0, 0x40)),
+    ((0x1c, 0x1b, 0x1f, 0x1d), (0x40, 0x40, 0x40, 0x40)),
+    ((0x1c, 0x1b, 0x20, 0x1e), (0x40, 0x40, 0x40, 0x40)),
+    ((0x24, 0x24, 0x25, 0x25), (0, 0x40, 0, 0x40)),
+    ((0x24, 0x24, 0x26, 0x26), (0, 0x40, 0, 0x40)),
+)
+
+
+def ghost_sprite_patterns(chr_data):
+    """NES ghost body masks; eye pixels are transparent on the 1-color VDP."""
+    if len(chr_data) != 8192:
+        raise ValueError('expected 8192 bytes of NES CHR data')
+    result = bytearray()
+    for frame, (tiles, attrs) in enumerate(GHOST_FRAMES):
+        quads = []
+        for tile, attr in zip(tiles, attrs):
+            data = chr_data[4096 + tile * 16:4096 + (tile + 1) * 16]
+            # Normal body is NES color 3; frightened body is NES color 1.
+            rows = [data[y] & (data[y + 8] if frame < 8 else ~data[y + 8])
+                    for y in range(8)]
+            if attr & 0x80:
+                rows.reverse()
+            if attr & 0x40:
+                rows = [int(f'{value:08b}'[::-1], 2) for value in rows]
+            quads.append(bytes(rows))
+        for index in (0, 2, 1, 3):
+            result.extend(quads[index])
+    return bytes(result)
+
+
 def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
     _, used = decode(maze)
     if used != len(maze):
@@ -176,10 +225,15 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
         for row in range(tile * 8, tile * 8 + 8):
             fg, bg = colors[row] >> 4, colors[row] & 15
             colors[row] = ((1 if fg == 15 else fg) << 4) | (1 if bg == 15 else bg)
-    for tile in range(0x30, 0x5b):
+    for tile in list(range(0x30, 0x5b)) + list(range(0xb0, 0xbc)):
         for row in range(tile * 8, tile * 8 + 8):
             fg, bg = colors[row] >> 4, colors[row] & 15
             colors[row] = ((15 if fg == 4 else fg) << 4) | (15 if bg == 4 else bg)
+    # NES life icon quadrants use index 3: render them Pac-Man yellow.
+    for tile in range(0x3c, 0x40):
+        for row in range(tile * 8, tile * 8 + 8):
+            fg, bg = colors[row] >> 4, colors[row] & 15
+            colors[row] = ((11 if fg == 15 else fg) << 4) | (11 if bg == 15 else bg)
     title_patterns, title_colors, title_names = title_assets(chr_data, logo, title_palette)
     with tempfile.TemporaryDirectory() as tmp:
         asm = Path(tmp) / 'viewer.asm'
@@ -187,13 +241,17 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
         asm.write_text((ROOT / 'src/sg1000/maze_viewer.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/maze.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/player.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/game.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/ghosts.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/sound.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/score.asm').read_text() + '\n' +
                        table('maze_data', maze) + table('pattern_data', patterns) +
                        table('color_data', colors) +
                        table('title_pattern_data', title_patterns) +
                        table('title_color_data', title_colors) +
                        table('title_name_data', title_names) +
-                       table('pacman_sprite_data', pacman_sprite_patterns(chr_data)))
+                       table('pacman_sprite_data', pacman_sprite_patterns(chr_data) +
+                             ghost_sprite_patterns(chr_data)))
         subprocess.run([assembler, '--obj=' + str(binary), str(asm)], check=True)
         rom = binary.read_bytes()
     if len(rom) > 49152:

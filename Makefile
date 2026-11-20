@@ -147,7 +147,7 @@ help:
 	$(info   make studio-check / profile-check / lint / format / hooks / clean)
 	@exit 0
 
-# SG-1000 movement/pellet prototype; this is not a complete game port.
+# SG-1000 gameplay prototype; this is not a complete game port.
 .PHONY: sg1000-maze-viewer
 SG1000_ROM ?= pacman.nes
 sg1000-maze-viewer:

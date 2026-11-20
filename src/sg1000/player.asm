@@ -1,4 +1,4 @@
-; Pac-Man movement and pellet prototype, operating on the decoded NES tile map.
+; Pac-Man movement and pellet handling on the decoded NES tile map.
 ; 1 KiB RAM: C260 camera row, C261 frame counter, C262/C263 center XY in pixels,
 ; C264 current dir, C265 requested dir (NES order up/left/down/right), C266-C26A
 ; scratch, C26B chomp timer; C270-C275 score digits (least significant first, 10 points/unit),
@@ -6,8 +6,8 @@
 ;
 ; This is not the complete NES movement engine: it uses 3/4 pixel per frame,
 ; tile-center collision/turns, simplified tunnel wrapping, and a scrolling
-; viewport. Chomp is approximated on the SN76489; no ghosts, fruit, frightened
-; mode, round transitions or NES audio-engine port exist yet.
+; viewport. Chomp is approximated on the SN76489. Ghosts and round logic live
+; in separate modules; this is not a complete NES engine translation.
 
 player_init:
     ld a,92                   ; NES start X=60h maps to maze center 92
@@ -45,7 +45,14 @@ player_frame:
     jr z,player_sound_done
     dec a
     ld (49771),a
-    jr nz,player_sound_done
+    jr z,player_sound_mute
+    ld b,a
+    ld a,8
+    sub b
+    or 144                    ; short channel-0 volume decay
+    out (127),a
+    jr player_sound_done
+player_sound_mute:
     ld a,159                  ; silence channel 0 after the chomp
     out (127),a
 player_sound_done:
@@ -278,6 +285,13 @@ player_consume_tile:
     cp 2
     ret nz
 player_power_pellet:
+    ld a,255                  ; frightened for approximately 4.25 seconds
+    ld (49791),a
+    push hl
+    call ghost_frighten
+    pop hl
+    xor a
+    ld (49792),a              ; reset 200/400/800/1600 chain
     ld a,5                    ; 50 points in 10-point units
     ld (49782),a
     ld a,7
@@ -293,10 +307,19 @@ player_regular_pellet:
     ld a,7
 player_clear_pellet:
     ld (hl),a
-    ld (49768),a              ; replacement tile for VDP
+    ld (49768),a
+    ld a,(49788)
+    or a
+    jr z,player_dot_count_done
+    dec a
+    ld (49788),a
+    jr nz,player_dot_count_done
+    ld a,1
+    ld (49846),a              ; complete the round after this frame
+player_dot_count_done:
     ; Short alternating approximate chomp on SN76489 tone channel 0.
-    ld a,(49761)
-    and 8
+    ld a,(49788)
+    and 1
     jr z,player_chomp_low
     ld a,140                  ; tone divisor 172
     out (127),a
@@ -310,12 +333,9 @@ player_chomp_high_byte:
     out (127),a
     ld a,148                  ; channel 0 volume
     out (127),a
-    ld a,3
+    ld a,6
     ld (49771),a
-    ld hl,49776
-    ld de,49782
-    call add_score_digits
-    call player_draw_score
+    call game_commit_score
     ; Address the changed tile on the current screen.
     ld a,(49763)
     srl a
@@ -350,9 +370,11 @@ player_chomp_high_byte:
 
 ; Print the six unpacked score digits in NES order, suppressing leading zeroes.
 player_draw_score:
-    ld de,6262
-    call set_vram_write
+    ld de,6390
     ld hl,49781
+    ; fall through: DE=VRAM destination, HL=most significant digit
+ game_write_digits:
+    call set_vram_write
     ld b,6
     ld c,0
 player_score_loop:

@@ -46,8 +46,11 @@ class VDP:
         return self.pad
 
 
-def advance(cpu, vdp, frames):
+def advance(cpu, vdp, frames, ghosts_disabled=False):
     for _ in range(frames):
+        if ghosts_disabled:
+            for ghost in range(4):
+                cpu.memory[0xc290 + ghost * 8 + 3] = 255
         vdp.vblank = True
         cpu.ticks_to_stop = 1000000
         cpu.run()
@@ -104,9 +107,9 @@ class ViewerTests(unittest.TestCase):
         vdp.pad = 0xef
         advance(cpu, vdp, 70)
         self.assertEqual(vdp.ram[14336:14336 + 288], pacman_sprite_patterns(chr_data))
-        self.assertEqual(vdp.ram[6916], 208)
-        self.assertEqual(vdp.ram[6144 + 2 * 32 + 22:6144 + 2 * 32 + 25], b'1UP')
-        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
+        self.assertEqual(vdp.ram[6932], 208)
+        self.assertEqual(vdp.ram[6144 + 5 * 32 + 22:6144 + 5 * 32 + 25], bytes([0xb0, 0xb3, 0xb2]))
+        self.assertEqual(vdp.ram[6144 + 1 * 32 + 22:6144 + 1 * 32 + 32], bytes(range(0xb4, 0xbc)) + b'  ')
         for bank in range(3):
             off = bank * 2048 + 0x2d * 8
             self.assertEqual(vdp.ram[off:off + 8], bytes(8))
@@ -130,19 +133,20 @@ class ViewerTests(unittest.TestCase):
         advance(cpu, vdp, 60)
         self.assertEqual(vdp.ram[6144:6912], title_assets(chr_data, logo, palette)[2])
         vdp.pad = 0xef
-        advance(cpu, vdp, 120)
+        advance(cpu, vdp, 15)
         vdp.pad = 0xff
-        advance(cpu, vdp, 10)
+        advance(cpu, vdp, 115, ghosts_disabled=True)
         # Pac-Man automatically moves left, eats the five dots and stops at
         # the wall to the left. NES score stores one unit for 10 points.
         self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (52, 164))
         self.assertEqual(bytes(cpu.memory[0xc270:0xc276]), b'\x05\0\0\0\0\0')
-        self.assertEqual(vdp.ram[6262:6269], b'     50')
+        self.assertEqual(vdp.ram[6390:6397], b'     50')
         for x in range(6, 11):
             self.assertEqual(cpu.memory[0xc000 + 20 * 22 + x], 7)
         self.assertIn(148, vdp.psg)  # chomp volume
-        self.assertEqual(vdp.psg[-1], 159)  # chomp ends muted
-        self.assertEqual(vdp.ram[6916], 208)
+        self.assertIn(159, vdp.psg)  # chomp ends muted
+        self.assertIn(185, vdp.psg)  # independent ghost-siren channel
+        self.assertEqual(vdp.ram[6932], 208)
         self.assertEqual(vdp.ram[6915] & 15, 11)  # yellow sprite
         self.assertEqual(vdp.ram[14336:14336 + 288], pacman_sprite_patterns(chr_data))
         camera = cpu.memory[0xc260]
@@ -152,7 +156,7 @@ class ViewerTests(unittest.TestCase):
                              bytes(cpu.memory[start:start + 22]))
         # Reverse along consumed tiles; the same dots must not score twice.
         vdp.pad = 0xf7  # right
-        advance(cpu, vdp, 35)
+        advance(cpu, vdp, 35, ghosts_disabled=True)
         self.assertGreater(cpu.memory[0xc262], 52)
         self.assertEqual(cpu.memory[0xc270], 5)
         # An uneaten power pellet gives 50 points and clears once. Pac-Man
@@ -160,17 +164,17 @@ class ViewerTests(unittest.TestCase):
         cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
         cpu.memory[0xc264], cpu.memory[0xc260], cpu.memory[0xc261] = 1, 0, 0
         vdp.pad = 0xff
-        advance(cpu, vdp, 10)
+        advance(cpu, vdp, 10, ghosts_disabled=True)
         self.assertEqual(cpu.memory[0xc000 + 3 * 22 + 2], 7)
         self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (20, 28))
         self.assertEqual(bytes(cpu.memory[0xc270:0xc276]), b'\0\x01\0\0\0\0')
-        self.assertEqual(vdp.ram[6262:6269], b'    100')
-        advance(cpu, vdp, 10)
+        self.assertEqual(vdp.ram[6390:6397], b'    100')
+        advance(cpu, vdp, 10, ghosts_disabled=True)
         self.assertEqual(bytes(cpu.memory[0xc270:0xc276]), b'\0\x01\0\0\0\0')
         # The horizontal tunnel wraps to the other edge.
         cpu.memory[0xc262], cpu.memory[0xc263] = 4, 108
         cpu.memory[0xc264], cpu.memory[0xc261] = 1, 0
-        advance(cpu, vdp, 4)
+        advance(cpu, vdp, 4, ghosts_disabled=True)
         self.assertGreaterEqual(cpu.memory[0xc262], 168)
         self.assertLessEqual(cpu.memory[0xc262], 172)
         # A legal upward turn moves Pac-Man along the corridor and the camera
@@ -178,25 +182,25 @@ class ViewerTests(unittest.TestCase):
         cpu.memory[0xc262], cpu.memory[0xc263] = 52, 164
         cpu.memory[0xc264], cpu.memory[0xc260], cpu.memory[0xc261] = 1, 3, 0
         vdp.pad = 0xfe
-        advance(cpu, vdp, 250)
+        advance(cpu, vdp, 250, ghosts_disabled=True)
         self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (52, 12))
         self.assertEqual(cpu.memory[0xc260], 0)
         for row in range(24):
             start = 0xc000 + row * 22
             self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
                              bytes(cpu.memory[start:start + 22]))
-        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
+        self.assertEqual(vdp.ram[6144 + 1 * 32 + 22:6144 + 1 * 32 + 32], bytes(range(0xb4, 0xbc)) + b'  ')
         # Follow a real corridor all the way back to the bottom. The map and
         # sprite must scroll together, and the HUD must not be overwritten.
         vdp.pad = 0xfd  # down to row 23, where the corridor ends
-        advance(cpu, vdp, 300)
+        advance(cpu, vdp, 300, ghosts_disabled=True)
         self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (52, 188))
         self.assertEqual(cpu.memory[0xc260], 3)
         vdp.pad = 0xfb  # left to column 2
-        advance(cpu, vdp, 60)
+        advance(cpu, vdp, 60, ghosts_disabled=True)
         self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (20, 188))
         vdp.pad = 0xfd  # down to row 25
-        advance(cpu, vdp, 40)
+        advance(cpu, vdp, 40, ghosts_disabled=True)
         self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (20, 204))
         self.assertEqual(cpu.memory[0xc260], 3)
         for row in range(24):
@@ -204,7 +208,7 @@ class ViewerTests(unittest.TestCase):
             self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
                              bytes(cpu.memory[start:start + 22]))
         self.assertEqual(vdp.ram[6912], 204 - 3 * 8 - 9)
-        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
+        self.assertEqual(vdp.ram[6144 + 1 * 32 + 22:6144 + 1 * 32 + 32], bytes(range(0xb4, 0xbc)) + b'  ')
 
 
 if __name__ == '__main__':

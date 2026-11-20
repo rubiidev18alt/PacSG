@@ -1,11 +1,20 @@
-; SG-1000 Pac-Man movement/pellet prototype. Assembled with maze.asm, player.asm,
-; score.asm and ROM-derived graphics by build_maze_viewer.py. Fire starts;
+; SG-1000 Pac-Man prototype. Assembled with maze, player, game, ghost, sound
+; and score modules plus ROM-derived graphics by build_maze_viewer.py. Fire starts;
 ; joystick controls Pac-Man. The viewport follows him vertically.
 ;
 ; TMS9918A Graphics II: pattern 0000, names 1800, sprites 1B00, colors 2000.
 ; 1 KiB SG-1000 RAM at C000-C3FF: map C000-C251, state C260, stack at C400.
     org 0
     di
+    ; Stop all PSG channels on power-up and on the game-over title return.
+    ld a,159
+    out (127),a
+    ld a,191
+    out (127),a
+    ld a,223
+    out (127),a
+    ld a,255
+    out (127),a
     ld sp,50176                ; C400h, stack grows down
     ld hl,maze_data
     ld de,49152                ; C000h
@@ -100,9 +109,10 @@ color_bank_loop:
     ld de,14336
     call set_vram_write
     ld hl,pacman_sprite_data
-    ld bc,288
+    ld bc,608
     call write_vram_block
     call player_init
+    call game_init
 
     ; Clear the name table, including the horizontal margins.
     ld de,6144
@@ -122,8 +132,12 @@ clear_names_loop:
     out (190),a
     call draw_maze
     call draw_hud
+    call game_draw_high
+    call game_draw_lives
+    call game_draw_round
     call player_draw_score
     call player_draw_sprite
+    call ghost_draw
     call display_on
 
 frame_loop:
@@ -132,7 +146,7 @@ wait_vblank:
     in a,(191)
     and 128
     jr z,wait_vblank
-    call player_frame
+    call game_frame
     jp frame_loop
 
 display_on:
@@ -195,35 +209,20 @@ maze_screen_tile:
     djnz maze_screen_row
     ret
 
-; HUD: score is updated separately; high score, lives and round are placeholders.
+; HUD: score, high score, spare lives and round are updated separately.
 ; Ten columns starting at x=22, untouched by maze redraw/scrolling.
 draw_hud:
-    ld de,6230                  ; row 2, column 22
-    call set_vram_write
-    ld hl,hud_1up
-    ld bc,10
-    call write_vram_block
-    ld de,6262                  ; row 3
-    call set_vram_write
-    ld hl,hud_zero
-    ld bc,10
-    call write_vram_block
-    ld de,6358                  ; row 6
+    ld de,6198                  ; row 1, column 22: NES HIGH SCORE placement
     call set_vram_write
     ld hl,hud_high
     ld bc,10
     call write_vram_block
-    ld de,6390                  ; row 7
+    ld de,6326                  ; row 5: 1UP
     call set_vram_write
-    ld hl,hud_zero
+    ld hl,hud_1up
     ld bc,10
     call write_vram_block
-    ld de,6742                  ; row 18
-    call set_vram_write
-    ld hl,hud_lives
-    ld bc,10
-    call write_vram_block
-    ld de,6806                  ; row 20
+    ld de,6806                  ; row 20: round number
     call set_vram_write
     ld hl,hud_round
     ld bc,10
@@ -231,11 +230,10 @@ draw_hud:
     ret
 
 ; Each row is 10 tile IDs; 32 is NES space.
-hud_1up:   defb 49,85,80,32,32,32,32,32,32,32
+hud_1up:   defb 176,179,178,32,32,32,32,32,32,32
 hud_zero:  defb 48,48,32,32,32,32,32,32,32,32
-hud_high:  defb 72,73,71,72,32,83,67,79,82,69
-hud_lives: defb 76,73,86,69,83,32,51,32,32,32
-hud_round: defb 82,79,85,78,68,32,49,32,32,32
+hud_high:  defb 180,181,182,183,184,185,186,187,32,32
+hud_round: defb 82,79,85,78,68,32,32,32,32,32
 
 vdp_registers:
     defb 2,128,6,255,3,54,7,1

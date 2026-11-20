@@ -1,28 +1,52 @@
-# SG-1000 port prototype (incomplete)
+# SG-1000 Pac-Man prototype (incomplete)
 
-The 48 KiB cartridge shows the NES title and maze and lets Pac-Man move and eat
-pellets. It is **not a complete Pac-Man port**: there are no ghosts, fruit,
-frightened mode, deaths, level completion or intermissions. The high score,
-lives and round labels are placeholders. The NES source is 6502 code and
-cannot run directly on the SG-1000's Z80.
+The 48 KiB cartridge has the NES-derived title, maze, Pac-Man and four ghosts.
+It is **not a complete or cycle-accurate NES port**: ghost navigation and
+release are simplified, eaten ghosts respawn after a delay rather than returning
+as eyes, and fruit, intermissions and the NES's level-specific speed/timer
+profiles are not implemented. The NES source is 6502 code and cannot run
+unchanged on the SG-1000's Z80.
 
 ## Controls and current behavior
 
 Press either fire button at the title, then use joystick 1. Pac-Man continues
 in his current direction when the stick is released; he can reverse mid-tile
 and turns at tile centers. Near the top or bottom, the camera scrolls the maze
-vertically while the HUD stays fixed: the 27-row NES maze is taller than the
-TMS9918's 24-row screen. The prototype has
-wall checks, tunnel wrapping, pellet removal, 10/50-point scoring and a simple
-alternating SN76489 chomp. Power pellets do not trigger frightened mode yet.
+while the HUD stays fixed: the 27-row NES maze is taller than the TMS9918's
+24-row screen.
 
-Pac-Man's nine 16x16 sprite masks are composed from the original NES CHR tiles
-and NES OAM flip attributes; the SG-1000 sprite is single-color yellow. The
-movement rate, turning and audio are approximations, **not cycle-accurate NES
-behavior**. The title and maze colors are approximate because the TMS9918
-supports only two colors per tile row. The prototype has been exercised with a
-Z80 emulator and a minimal VDP/PSG model, not on real SG-1000 hardware or in a
-full system emulator.
+The prototype includes walls and tunnel wrapping, dots and energizers,
+10/50-point scoring, a frightened timer, flashing frightened ghosts, and
+200/400/800/1600-point ghost chains. A ghost hit costs a life and respawns the
+actors without resetting the dots; losing the last life returns to the title.
+Clearing all 192 dots starts the next round with the maze restored. The HUD has
+NES-derived score labels and life icons, a working score/high score, a one-time
+extra life at 10,000, and a numeric round indicator. The high score is retained
+across game overs while the machine stays powered on.
+
+Pac-Man's and the ghosts' 16x16 masks are composed from the original NES CHR
+and OAM flip attributes. SG-1000 sprites have one color, so ghost eye pixels
+are transparent rather than white. The TMS9918 displays at most four sprites on
+one scanline; ghost priority rotates to share the resulting flicker. Title and
+maze colors are approximations because each background tile row supports only
+two colors. Movement and audio are approximations, not exact NES behavior.
+
+### Sound channels
+
+The SN76489 channels are assigned independently so a pellet chomp does not cut
+off the ghost warble or an event sound:
+
+* tone 0: alternating pellet chomp with a short volume decay;
+* tone 1: continuously sweeping ghost/frightened warble;
+* tone 2: ghost-eaten, death, and level-clear effects;
+* noise: currently muted.
+
+The three event effects share tone 2, so a newer event replaces an earlier event
+on that channel. The sounds are original SG-1000 approximations, not the NES
+APU streams or a note-for-note transcription.
+
+The prototype has been exercised with a Z80 emulator and a minimal VDP/PSG
+model, not on real SG-1000 hardware or in a full system emulator.
 
 ## Build
 
@@ -50,12 +74,16 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m unittest discover -s tests/sg100
 
 ## Source and tools
 
-* `src/sg1000/player.asm` implements the current movement, pellet, score HUD,
-  camera, sprite and chomp prototype.
+* `src/sg1000/player.asm` implements Pac-Man movement, pellets, score output,
+  camera, sprite and chomp.
+* `src/sg1000/ghosts.asm` implements simplified ghost movement, collisions,
+  frightened sprites and sprite-priority rotation.
+* `src/sg1000/game.asm` manages lives, high score, game over and level reset;
+  `src/sg1000/sound.asm` manages the siren and event-sound channels.
 * `src/sg1000/maze_viewer.asm` sets up the TMS9918 title, maze and HUD;
   `scripts/sg1000/build_maze_viewer.py` builds the ROM and converts graphics.
 * `src/sg1000/turn_candidates.asm` translates the NES ghost turn-candidate
-  routine, but is not yet integrated into the prototype.
+  routine, but is not yet integrated into the simplified ghost logic.
 * `src/sg1000/maze.asm` translates the original 27-by-22 RLE decoder to Z80;
   it writes a RAM tile map instead of the NES PPU.
 * `src/sg1000/score.asm` translates the NES's six-digit decimal addition.
