@@ -109,7 +109,7 @@ color_bank_loop:
     ld de,14336
     call set_vram_write
     ld hl,pacman_sprite_data
-    ld bc,608
+    ld bc,928
     call write_vram_block
     call player_init
     call game_init

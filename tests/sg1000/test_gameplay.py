@@ -64,7 +64,8 @@ class GameplayTests(unittest.TestCase):
         advance(cpu, vdp, 30)
         self.assertNotEqual(cpu.memory[0xc291], start_y)
         self.assertEqual(vdp.ram[14336 + 288:14336 + 608], ghost_sprite_patterns(self.chr_data))
-        self.assertEqual(vdp.ram[6932], 208)
+        self.assertEqual(vdp.ram[14336 + 608:14336 + 928], ghost_sprite_patterns(self.chr_data, eyes=True))
+        self.assertEqual(vdp.ram[6948], 208)
         # Fire a separate event while Pac-Man consumes a pellet. Within the
         # same window the chomp (0), siren (1), and event (2) all write their
         # own SN76489 volume registers; no channel-1/2 mute is issued.
@@ -91,11 +92,15 @@ class GameplayTests(unittest.TestCase):
         for ghost in range(4):
             cpu.memory[0xc290 + ghost * 8 + 3] = 0
         advance(cpu, vdp, 1)
-        self.assertEqual([vdp.ram[6919 + 4 * n] & 15 for n in range(4)], [8, 13, 7, 10])
+        self.assertEqual([vdp.ram[6919 + 8 * n] & 15 for n in range(4)], [8, 13, 7, 10])
+        self.assertEqual([vdp.ram[6923 + 8 * n] & 15 for n in range(4)], [15] * 4)
+        for n in range(4):
+            self.assertEqual(vdp.ram[6916 + 8*n:6918 + 8*n], vdp.ram[6920 + 8*n:6922 + 8*n])
+            self.assertEqual(vdp.ram[6922 + 8*n] - vdp.ram[6918 + 8*n], 40)
         before = [(cpu.memory[0xc290 + n * 8], cpu.memory[0xc291 + n * 8]) for n in range(4)]
         cpu.memory[0xc261] = 8
         advance(cpu, vdp, 5)
-        self.assertEqual([vdp.ram[6919 + 4 * n] & 15 for n in range(4)], [13, 7, 10, 8])
+        self.assertEqual([vdp.ram[6919 + 8 * n] & 15 for n in range(4)], [13, 7, 10, 8])
         after = [(cpu.memory[0xc290 + n * 8], cpu.memory[0xc291 + n * 8]) for n in range(4)]
         for old, new in zip(before, after):
             self.assertNotEqual(old, new)
@@ -109,7 +114,8 @@ class GameplayTests(unittest.TestCase):
         cpu.memory[0xc290], cpu.memory[0xc291] = 52, 68
         cpu.memory[0xc292], cpu.memory[0xc293] = 1, 0
         advance(cpu, vdp, 1)
-        self.assertEqual(cpu.memory[0xc27f], 255)
+        self.assertEqual(cpu.memory[0xc27f], 165)
+        self.assertEqual(cpu.memory[0xc2d4], 1)
         self.assertEqual(cpu.memory[0xc292], 3)  # reversed on energizer
         self.assertEqual(cpu.memory[0xc000 + 3 * 22 + 2], 7)
         self.assertEqual(vdp.ram[6919] & 15, 4)  # blue frightened ghost
@@ -124,6 +130,30 @@ class GameplayTests(unittest.TestCase):
             self.assertEqual(cpu.memory[0xc27e], 3)
         self.assertEqual(vdp.ram[6390:6397], b'   3050')
         self.assertEqual(cpu.memory[0xc280], 3)  # capped chain index
+
+    def test_mode_timer_reverses_and_pauses_for_frightened(self):
+        cpu, vdp = self.new_game()
+        for ghost in range(4):
+            cpu.memory[0xc290 + ghost * 8 + 3] = 0
+            cpu.memory[0xc290 + ghost * 8 + 2] = 1
+            cpu.memory[0xc290 + ghost * 8 + 5] = 0
+        cpu.memory[0xc2d0], cpu.memory[0xc2d1], cpu.memory[0xc2d2] = 0, 1, 59
+        cpu.memory[0xc27f] = 5
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc2d0], 0)
+        self.assertEqual(cpu.memory[0xc2d2], 59)
+        cpu.memory[0xc27f] = 0
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc2d0], 1)
+        self.assertEqual(cpu.memory[0xc2d1], 20)
+        self.assertEqual([cpu.memory[0xc292 + n * 8] for n in range(4)], [3] * 4)
+
+    def test_frightened_long_timer_rollover(self):
+        cpu, vdp = self.new_game()
+        cpu.memory[0xc27f], cpu.memory[0xc2d4] = 1, 1
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc27f], 255)
+        self.assertEqual(cpu.memory[0xc2d4], 0)
 
     def test_death_lives_and_highscore_persists_after_game_over(self):
         cpu, vdp = self.new_game()

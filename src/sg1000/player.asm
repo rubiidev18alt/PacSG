@@ -285,13 +285,9 @@ player_consume_tile:
     cp 2
     ret nz
 player_power_pellet:
-    ld a,255                  ; frightened for approximately 4.25 seconds
-    ld (49791),a
     push hl
-    call ghost_frighten
+    call ghost_start_frightened
     pop hl
-    xor a
-    ld (49792),a              ; reset 200/400/800/1600 chain
     ld a,5                    ; 50 points in 10-point units
     ld (49782),a
     ld a,7

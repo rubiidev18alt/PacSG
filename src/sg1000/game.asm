@@ -79,6 +79,14 @@ game_frame:
     jr z,game_power_tick_done
     dec a
     ld (49791),a
+    jr nz,game_power_tick_done
+    ld a,(49876)              ; each extra block represents 255 frames
+    or a
+    jr z,game_power_tick_done
+    dec a
+    ld (49876),a
+    ld a,255
+    ld (49791),a
  game_power_tick_done:
     call player_frame
     ld a,(49846)
@@ -146,6 +154,7 @@ game_reset_positions:
     xor a
     ld (49791),a
     ld (49792),a
+    ld (49876),a
     call ghost_init
     ret
 

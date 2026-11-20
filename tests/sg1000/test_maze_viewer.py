@@ -107,7 +107,7 @@ class ViewerTests(unittest.TestCase):
         vdp.pad = 0xef
         advance(cpu, vdp, 70)
         self.assertEqual(vdp.ram[14336:14336 + 288], pacman_sprite_patterns(chr_data))
-        self.assertEqual(vdp.ram[6932], 208)
+        self.assertEqual(vdp.ram[6948], 208)
         self.assertEqual(vdp.ram[6144 + 5 * 32 + 22:6144 + 5 * 32 + 25], bytes([0xb0, 0xb3, 0xb2]))
         self.assertEqual(vdp.ram[6144 + 1 * 32 + 22:6144 + 1 * 32 + 32], bytes(range(0xb4, 0xbc)) + b'  ')
         for bank in range(3):
@@ -146,7 +146,7 @@ class ViewerTests(unittest.TestCase):
         self.assertIn(148, vdp.psg)  # chomp volume
         self.assertIn(159, vdp.psg)  # chomp ends muted
         self.assertIn(185, vdp.psg)  # independent ghost-siren channel
-        self.assertEqual(vdp.ram[6932], 208)
+        self.assertEqual(vdp.ram[6948], 208)
         self.assertEqual(vdp.ram[6915] & 15, 11)  # yellow sprite
         self.assertEqual(vdp.ram[14336:14336 + 288], pacman_sprite_patterns(chr_data))
         camera = cpu.memory[0xc260]

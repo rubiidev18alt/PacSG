@@ -3,8 +3,8 @@
 The 48 KiB cartridge has the NES-derived title, maze, Pac-Man and four ghosts.
 It is **not a complete or cycle-accurate NES port**: ghost navigation and
 release are simplified, eaten ghosts respawn after a delay rather than returning
-as eyes, and fruit, intermissions and the NES's level-specific speed/timer
-profiles are not implemented. The NES source is 6502 code and cannot run
+as eyes, and fruit and intermissions are not implemented. Speed and timing profiles
+are approximations, not complete NES behavior. The NES source is 6502 code and cannot run
 unchanged on the SG-1000's Z80.
 
 ## Controls and current behavior
@@ -25,9 +25,13 @@ extra life at 10,000, and a numeric round indicator. The high score is retained
 across game overs while the machine stays powered on.
 
 Pac-Man's and the ghosts' 16x16 masks are composed from the original NES CHR
-and OAM flip attributes. SG-1000 sprites have one color, so ghost eye pixels
-are transparent rather than white. The TMS9918 displays at most four sprites on
-one scanline; ghost priority rotates to share the resulting flicker. Title and
+and OAM flip attributes. Each ghost uses separate colored-body and white-eye
+sprites (blue and flashing white when frightened). The TMS9918 displays at most
+four sprites on one scanline: layering increases dropout, and ghost priority
+rotates to distribute the resulting flicker. Ghosts use NES-inspired scatter and
+chase targets, non-reversing ranked turns, frightened choices and per-round
+speed and frightened-time approximations. The long later-round chase phases,
+house releases and eaten-ghost return are still simplified. Title and
 maze colors are approximations because each background tile row supports only
 two colors. Movement and audio are approximations, not exact NES behavior.
 

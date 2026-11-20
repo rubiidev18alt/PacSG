@@ -1,8 +1,8 @@
 ; Four SG-1000 ghost approximations. Each C290 record is eight bytes:
-; X, Y, direction, release/respawn wait, TMS color, three reserved bytes.
-; Ghosts use NES-derived sprite masks; eyes are transparent because each TMS
-; sprite has one color. The four-sprites-per-scanline limit is mitigated by
-; rotating ghost priority. This is not the original NES AI or house sequence.
+; X, Y, direction, release/respawn wait, TMS color, fractional speed, two reserved bytes.
+; Ghosts use two NES-derived sprite masks: colored body plus white eyes.
+; The TMS9918's four-sprites-per-scanline limit is mitigated by rotating ghost
+; priority, but layered sprites can flicker/drop when many actors overlap.
 ;
 ; C28D/E save Pac-Man XY while using player_can_move for ghost tile probes;
 ; C28F ghost index; C2B0/C2B1 drawing/loop work; C2B7 opposite direction;
@@ -13,6 +13,10 @@ ghost_init:
     ld de,49808
     ld bc,32
     ldir
+    xor a
+    ld (49872),a              ; scatter/chase phase
+    ld (49874),a              ; 60 Hz seconds divider
+    call ghost_load_phase_duration
     ret
 
 ghost_initial_records:
@@ -21,8 +25,44 @@ ghost_initial_records:
     defb 52,148,1,90,7,0,0,0    ; cyan
     defb 132,148,3,135,10,0,0,0 ; orange
 
+; NES per-round frightened durations in 60-Hz frames. A nonzero high
+; component counts additional 255-frame blocks, so the low countdown stays
+; nonzero throughout frightened mode. Later rounds with duration zero do not
+; make ghosts edible in this prototype.
+ghost_start_frightened:
+    xor a
+    ld (49792),a              ; reset ghost chain
+    ld a,(49789)
+    cp 24
+    jr c,ghost_fright_round_ok
+    ld a,23
+ ghost_fright_round_ok:
+    dec a
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,ghost_fright_durations
+    add hl,de
+    ld a,(hl)
+    ld (49791),a
+    inc hl
+    ld a,(hl)
+    ld (49876),a
+    ld a,(49791)
+    or a
+    ret z
+    jp ghost_frighten
+; Low frames, number of additional 255-frame blocks; seconds per NES table:
+; 7,6,4,3,2,5,2,2,1,5,2,1,1,3,1,1,0,1,0,0,0,0,0.
+ghost_fright_durations:
+    defb 165,1,105,1,240,0,180,0,120,0,45,1
+    defb 120,0,120,0,60,0,45,1,120,0,60,0
+    defb 60,0,180,0,60,0,60,0,0,0,60,0
+    defb 0,0,0,0,0,0,0,0,0,0
+
 ; Reverse released ghosts immediately on a power pellet, as the NES does.
 ghost_frighten:
+ghost_reverse_all:
     ld ix,49808
     ld b,4
  ghost_frighten_loop:
@@ -39,6 +79,7 @@ ghost_frighten:
     ret
 
 ghost_frame:
+    call ghost_mode_tick
     ld a,(49762)
     ld (49805),a
     ld a,(49763)
@@ -56,17 +97,12 @@ ghost_frame:
     ld (ix+3),a
     jp ghost_next
  ghost_released:
-    ; Normal ghosts move every other frame, frightened ghosts every fourth.
-    ld a,(49791)
-    or a
-    ld a,(49761)
-    jr z,ghost_normal_speed
-    and 3
-    jr nz,ghost_check_collision
-    jr ghost_move
- ghost_normal_speed:
-    and 1
-    jr nz,ghost_check_collision
+    ; NES-style fixed-point fraction: accumulate each ghost's stage/mode
+    ; speed and move one pixel on carry (late-stage speeds are capped at 1).
+    call ghost_speed_fraction
+    add a,(ix+5)
+    ld (ix+5),a
+    jp nc,ghost_check_collision
  ghost_move:
     ; Reuse the NES-style neighbor probe with ghost coordinates temporarily
     ; installed, restoring the real Pac-Man coordinates before collision.
@@ -149,67 +185,316 @@ ghost_frame:
     call ghost_draw
     ret
 
-; Choose a legal non-reverse direction. Prefer moving toward Pac-Man, with
-; alternating axis priority by ghost; while frightened prefer moving away.
-; If there is no non-reverse exit, reverse at a dead end. Z means a move exists.
+; Normal, frightened and tunnel fractions from the NTSC level profiles.
+; Blinky's level-one pellet thresholds use the two original boosted speeds.
+ghost_speed_fraction:
+    ld a,(49791)
+    or a
+    jr nz,ghost_slow_fraction
+    ld a,(ix+1)
+    cp 108                    ; tunnel row
+    jr nz,ghost_normal_fraction
+    ld a,(ix+0)
+    cp 44
+    jr c,ghost_slow_fraction
+    cp 140
+    jr nc,ghost_slow_fraction
+ ghost_normal_fraction:
+    ld a,(49789)
+    cp 1
+    jr nz,ghost_normal_other_rounds
+    ld a,(49807)
+    or a
+    jr nz,ghost_normal_level_one
+    ld a,(49788)
+    cp 11
+    jr c,ghost_fast_second
+    cp 21
+    jr c,ghost_fast_first
+ ghost_normal_level_one:
+    ld a,144                  ; 90h / 256 pixels per frame
+    ret
+ ghost_fast_first:
+    ld a,160
+    ret
+ ghost_fast_second:
+    ld a,176
+    ret
+ ghost_normal_other_rounds:
+    cp 4
+    jr c,ghost_normal_round_two
+    cp 6
+    jr c,ghost_normal_round_four
+    cp 22
+    jr c,ghost_normal_round_six
+    ld a,255                  ; 0110h+ profiles capped at one pixel/frame
+    ret
+ ghost_normal_round_two:
+    ld a,160
+    ret
+ ghost_normal_round_four:
+    ld a,208
+    ret
+ ghost_normal_round_six:
+    ld a,240
+    ret
+ ghost_slow_fraction:
+    ld a,(49789)
+    cp 4
+    jr c,ghost_slow_early
+    cp 6
+    jr c,ghost_slow_mid
+    ld a,128
+    ret
+ ghost_slow_mid:
+    ld a,112
+    ret
+ ghost_slow_early:
+    ld a,80
+    ret
+
+; Round-driven scatter/chase schedule based on the NES timer tables. The
+; divider pauses during frightened mode. Reversals use the shared helper.
+ghost_mode_tick:
+    ld a,(49791)
+    or a
+    ret nz
+    ld a,(49873)
+    cp 255
+    ret z
+    ld a,(49874)
+    inc a
+    cp 60
+    jr c,ghost_mode_store_divider
+    xor a
+    ld (49874),a
+    ld a,(49873)
+    dec a
+    ld (49873),a
+    ret nz
+    ld a,(49872)
+    cp 7
+    ret nc
+    inc a
+    ld (49872),a
+    call ghost_load_phase_duration
+    call ghost_reverse_all
+    ret
+ ghost_mode_store_divider:
+    ld (49874),a
+    ret
+
+ghost_load_phase_duration:
+    ld hl,ghost_phase_round_one
+    ld a,(49789)
+    cp 2
+    jr c,ghost_phase_table_ready
+    ld hl,ghost_phase_round_two
+    cp 4
+    jr c,ghost_phase_table_ready
+    ld hl,ghost_phase_later
+ ghost_phase_table_ready:
+    ld a,(49872)
+    ld e,a
+    ld d,0
+    add hl,de
+    ld a,(hl)
+    ld (49873),a
+    ret
+ghost_phase_round_one:
+    defb 7,20,7,20,5,20,5,255
+ghost_phase_round_two:
+    defb 7,20,7,20,5,255,255,255
+ghost_phase_later:
+    defb 5,20,5,20,5,255,255,255
+
+; Choose targets and ranked directions using the NES slot formulas and LUT.
+; This reuses the prototype's RAM tile probes and its dead-end fallback.
 ghost_choose_direction:
     ld a,(ix+2)
     xor 2
     ld (49847),a
+    ld a,(49791)
+    or a
+    jp nz,ghost_seeded_choice
+    ld a,(49872)
+    and 1
+    jr nz,ghost_chase_target
+    ; NES corner targets in maze-local pixels (NES coordinates minus 4).
+    ld a,(49807)
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,ghost_corner_targets
+    add hl,de
+    ld a,(hl)
+    ld (49842),a
+    inc hl
+    ld a,(hl)
+    ld (49843),a
+    jr ghost_rank_target
+ ghost_chase_target:
+    ld a,(49807)
+    or a
+    jr z,ghost_target_pacman
+    cp 1
+    jr z,ghost_target_ahead
+    cp 2
+    jr z,ghost_target_vector
+    ; Clyde uses Pac-Man when either axis is >=32 pixels away, otherwise
+    ; chooses a seeded legal non-reverse exit (the reconstructed NES behavior).
     ld a,(49762)
     ld b,a
     ld a,(49805)
-    cp b
-    ld a,3                    ; toward right
-    jr nc,ghost_horizontal_ready
-    ld a,1                    ; toward left
- ghost_horizontal_ready:
-    ld b,a
-    ld a,(49791)
-    or a
-    ld a,b
-    jr z,ghost_horizontal_store
-    xor 2                     ; flee
- ghost_horizontal_store:
-    ld (49842),a
+    sub b
+    jr nc,ghost_clyde_x_positive
+    neg
+ ghost_clyde_x_positive:
+    cp 32
+    jr nc,ghost_target_pacman
     ld a,(49763)
     ld b,a
     ld a,(49806)
-    cp b
-    ld a,2                    ; toward down
-    jr nc,ghost_vertical_ready
-    xor a                     ; toward up
- ghost_vertical_ready:
-    ld b,a
-    ld a,(49791)
-    or a
-    ld a,b
-    jr z,ghost_vertical_store
-    xor 2
- ghost_vertical_store:
+    sub b
+    jr nc,ghost_clyde_y_positive
+    neg
+ ghost_clyde_y_positive:
+    cp 32
+    jp c,ghost_seeded_choice
+ ghost_target_pacman:
+    ld a,(49805)
+    ld (49842),a
+    ld a,(49806)
     ld (49843),a
-    ; Alternate which axis is tested first so ghosts don't all choose alike.
-    ld a,(49807)
-    and 1
-    jr nz,ghost_vertical_first
+    jr ghost_rank_target
+ ghost_target_ahead:
+    ; Pinky targets 24 pixels ahead of Pac-Man's current direction.
+    ld a,(49764)
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,ghost_lead_offsets
+    add hl,de
+    ld a,(49805)
+    add a,(hl)
+    ld (49842),a
+    inc hl
+    ld a,(49806)
+    add a,(hl)
+    ld (49843),a
+    jr ghost_rank_target
+ ghost_target_vector:
+    ; Inky's NES target is 2*Pac-Man minus Blinky, with byte wrap.
+    ld a,(49805)
+    add a,a
+    ld b,a
+    ld a,(49808)
+    ld c,a
+    ld a,b
+    sub c
+    ld (49842),a
+    ld a,(49806)
+    add a,a
+    ld b,a
+    ld a,(49809)
+    ld c,a
+    ld a,b
+    sub c
+    ld (49843),a
+ ghost_rank_target:
+    ; NES builds an index from X sign, Y sign and dominant axis. Arithmetic
+    ; here deliberately follows the original unsigned subtract/absolute value.
+    ld e,0
+    ld a,(49762)
+    ld b,a
     ld a,(49842)
-    ld (49848),a
-    xor 2
-    ld (49851),a
+    sub b
+    jr nc,ghost_rank_x_positive
+    neg
+    set 2,e
+ ghost_rank_x_positive:
+    ld (49844),a
+    ld a,(49763)
+    ld b,a
     ld a,(49843)
+    sub b
+    jr nc,ghost_rank_y_positive
+    neg
+    set 1,e
+ ghost_rank_y_positive:
+    ld b,a
+    ld a,(49844)
+    cp b
+    jr nc,ghost_rank_index_ready
+    set 0,e
+ ghost_rank_index_ready:
+    ld a,e
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,ghost_ranked_directions
+    add hl,de
+    ld a,(hl)
+    ld (49848),a
+    inc hl
+    ld a,(hl)
     ld (49849),a
-    xor 2
+    ld a,(ix+2)
+    dec a
+    and 3
     ld (49850),a
+    ld a,(ix+2)
+    inc a
+    and 3
+    ld (49851),a
     jr ghost_try_candidates
- ghost_vertical_first:
-    ld a,(49843)
-    ld (49848),a
-    xor 2
-    ld (49851),a
-    ld a,(49842)
-    ld (49849),a
-    xor 2
-    ld (49850),a
+
+; NES frightened/Clyde-near choice: scan directions seeded by frame counter,
+; exclude reversal, and require a tile in the low 0..7 range.
+ghost_seeded_choice:
+    ld a,(49761)
+    ld c,a
+    ld b,4
+ ghost_seeded_loop:
+    inc c
+    ld a,c
+    and 3
+    ld (49852),a
+    push bc
+    ld b,a
+    ld a,(49847)
+    cp b
+    jr z,ghost_seeded_reject
+    ld a,b
+    call player_can_move
+    jr nz,ghost_seeded_reject
+    ld a,(hl)
+    and 248
+    jr nz,ghost_seeded_reject
+    pop bc
+    ld a,(49852)
+    ld (ix+2),a
+    xor a
+    ret
+ ghost_seeded_reject:
+    pop bc
+    djnz ghost_seeded_loop
+    ; No accepted seeded choice: take the prototype's safe dead-end fallback.
+    ld a,(49847)
+    call player_can_move
+    ret nz
+    ld a,(49847)
+    ld (ix+2),a
+    xor a
+    ret
+
+ghost_corner_targets:
+    defb 164,4,20,4,164,204,20,204
+ghost_lead_offsets:
+    defb 0,232,232,0,0,24,24,0
+ghost_ranked_directions:
+    defb 3,2,2,3,3,0,0,3,1,2,2,1,1,0,0,1
+
  ghost_try_candidates:
     ld hl,49848
     ld b,4
@@ -381,7 +666,7 @@ ghost_draw:
 ghost_draw_one:
     ld a,(ix+3)
     or a
-    jr nz,ghost_draw_hidden
+    jp nz,ghost_draw_hidden
     ld a,(49760)
     add a,a
     add a,a
@@ -389,17 +674,22 @@ ghost_draw_one:
     ld b,a
     ld a,(ix+1)
     sub b
-    jr c,ghost_draw_hidden
+    jp c,ghost_draw_hidden
     cp 200
-    jr nc,ghost_draw_hidden
+    jp nc,ghost_draw_hidden
     sub 9
+    ld (49860),a              ; sprite Y, same for both layers
     out (190),a
     ld a,(ix+4)
-    ld b,a                    ; sprite color, later possibly early clock
+    ld b,a                    ; body color, later possibly early clock
     ld a,(49791)
     or a
     jr z,ghost_draw_color_ready
     ld b,4                    ; frightened blue
+    ld a,(49876)
+    or a
+    jr nz,ghost_draw_color_ready
+    ld a,(49791)
     cp 60
     jr nc,ghost_draw_color_ready
     ld a,(49761)
@@ -416,7 +706,10 @@ ghost_draw_one:
  ghost_draw_regular_x:
     sub 8
  ghost_draw_x_ready:
+    ld (49861),a
     out (190),a
+    ld a,b
+    ld (49862),a              ; body color / early-clock flag
     ld a,(49761)
     and 8
     ld c,0
@@ -437,12 +730,39 @@ ghost_draw_one:
  ghost_draw_pattern:
     add a,a
     add a,a
+    ld (49863),a
     out (190),a
-    ld a,b
+    ld a,(49862)
+    out (190),a               ; body sprite (higher priority than its eyes)
+    ld a,(49860)
+    out (190),a
+    ld a,(49861)
+    out (190),a
+    ld a,(49863)
+    add a,40                  ; eye masks follow 10 body frames
+    out (190),a
+    ld a,(49862)
+    and 128                   ; preserve early-clock bit
+    ld b,a
+    ld a,(49862)
+    and 15
+    cp 15
+    ld a,15                   ; white eyes; red face when flashing white
+    jr nz,ghost_eye_color_ready
+    ld a,8
+ ghost_eye_color_ready:
+    or b
     out (190),a
     ret
  ghost_draw_hidden:
-    ld a,209                  ; off-screen, not the D0 end-of-list marker
+    ; Two hidden entries, not D0 (which terminates the entire sprite list).
+    ld a,209
+    out (190),a
+    xor a
+    out (190),a
+    out (190),a
+    out (190),a
+    ld a,209
     out (190),a
     xor a
     out (190),a

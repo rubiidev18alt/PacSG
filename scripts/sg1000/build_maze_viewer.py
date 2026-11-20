@@ -180,8 +180,8 @@ GHOST_FRAMES = (
 )
 
 
-def ghost_sprite_patterns(chr_data):
-    """NES ghost body masks; eye pixels are transparent on the 1-color VDP."""
+def ghost_sprite_patterns(chr_data, *, eyes=False):
+    """NES ghost masks, separated into body and eye layers for the TMS VDP."""
     if len(chr_data) != 8192:
         raise ValueError('expected 8192 bytes of NES CHR data')
     result = bytearray()
@@ -189,9 +189,14 @@ def ghost_sprite_patterns(chr_data):
         quads = []
         for tile, attr in zip(tiles, attrs):
             data = chr_data[4096 + tile * 16:4096 + (tile + 1) * 16]
-            # Normal body is NES color 3; frightened body is NES color 1.
-            rows = [data[y] & (data[y + 8] if frame < 8 else ~data[y + 8])
-                    for y in range(8)]
+            # Normal body = NES color 3 and eyes = 2. Frightened body = 1
+            # and its face = 3. Each plane is a separate one-color sprite.
+            if eyes:
+                rows = [(~data[y] & data[y + 8]) if frame < 8 else
+                        (data[y] & data[y + 8]) for y in range(8)]
+            else:
+                rows = [data[y] & (data[y + 8] if frame < 8 else ~data[y + 8])
+                        for y in range(8)]
             if attr & 0x80:
                 rows.reverse()
             if attr & 0x40:
@@ -251,7 +256,8 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
                        table('title_color_data', title_colors) +
                        table('title_name_data', title_names) +
                        table('pacman_sprite_data', pacman_sprite_patterns(chr_data) +
-                             ghost_sprite_patterns(chr_data)))
+                             ghost_sprite_patterns(chr_data) +
+                             ghost_sprite_patterns(chr_data, eyes=True)))
         subprocess.run([assembler, '--obj=' + str(binary), str(asm)], check=True)
         rom = binary.read_bytes()
     if len(rom) > 49152:
