@@ -10,6 +10,9 @@ sound_frame:
     ld a,(49904)
     or a
     jp nz,sound_ready_frame
+    ld a,(49939)
+    cp 2
+    jr z,sound_event_tick     ; silence siren during death animation
     ; Use the NES's priority: returning eyes, frightened, then three
     ; pellet-count bands. Each one-frame note sequence loops on PSG tone 1.
     call sound_siren_tick

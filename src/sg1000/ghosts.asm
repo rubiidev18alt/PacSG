@@ -957,42 +957,7 @@ ghost_collide:
     defb 2,4,8,6
 
 ghost_player_hit:
-    xor a
-    ld (49771),a
-    call sound_stop_chomp    ; stop chomp when play pauses
-    ld a,(49790)
-    or a
-    ret z
-    dec a
-    ld (49790),a
-    call game_draw_lives
-    ld a,100
-    ld (49794),a
-    ld a,2
-    ld (49795),a
-    ld a,(49790)
-    or a
-    jr nz,ghost_respawn_player
-    ld a,1
-    ld (49804),a              ; game over returns to title after pause
-    ld a,120
-    ld (49793),a
-    call game_show_over
-    ret
- ghost_respawn_player:
-    call game_reset_positions
-    ld a,90
-    ld (49793),a
-    ld a,128
-    out (191),a
-    ld a,129
-    out (191),a
-    call draw_maze
-    call player_draw_sprite
-    call ghost_draw
-    call game_show_ready
-    call display_on
-    ret
+    jp game_death_start
 
 ; Emit four sprites following Pac-Man at SAT 1B04. Rotate their order to share
 ; the TMS9918's four-sprites-per-scanline limit when all five actors overlap.

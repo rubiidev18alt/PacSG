@@ -4,7 +4,9 @@ import tempfile
 import unittest
 
 from test_maze_viewer import ROOT, advance, make_machine
-from build_maze_viewer import assets_from_rom, build, fruit_sprite_patterns, ghost_sprite_patterns, title_assets
+from build_maze_viewer import (assets_from_rom, build, death_sprite_patterns,
+                               fruit_sprite_patterns, ghost_sprite_patterns,
+                               pacman_sprite_patterns, ready_text_patterns, title_assets)
 from convert_chr import convert
 from nes_audio import STREAMS, psg_events
 
@@ -289,6 +291,68 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc2ae], 4)  # Clyde exits on timeout
         self.assertEqual((cpu.memory[0xc30c], cpu.memory[0xc30d]), (0, 0))
 
+    def test_nes_ready_glyphs_and_temporary_maze_overlay(self):
+        cpu, vdp = make_machine(self.rom)
+        advance(cpu, vdp, 210)
+        vdp.pad = 0xef
+        advance(cpu, vdp, 15)
+        vdp.pad = 0xff
+        camera = cpu.memory[0xc260]
+        def row(world_row, col, count):
+            start = 6144 + (world_row - camera) * 32 + col
+            return vdp.ram[start:start + count]
+        self.assertEqual(vdp.ram[6912], 208)  # actors enter after 120 frames
+        self.assertEqual(row(11, 8, 6), bytes(range(230, 236)))
+        self.assertEqual(row(13, 10, 3), bytes(range(236, 239)))
+        self.assertEqual(row(16, 8, 6), bytes(range(224, 230)))
+        for bank in range(3):
+            offset = bank * 2048 + 224 * 8
+            self.assertEqual(vdp.ram[offset:offset + 120], ready_text_patterns(self.chr_data))
+            self.assertEqual(vdp.ram[8192 + offset:8192 + offset + 48], bytes([0xb1] * 48))
+            self.assertEqual(vdp.ram[8192 + offset + 48:8192 + offset + 120], bytes([0x71] * 72))
+        self.assertEqual(vdp.ram[14336 + 1440:14336 + 1824], death_sprite_patterns(self.chr_data))
+        frames = death_sprite_patterns(self.chr_data)
+        self.assertEqual(len(frames), 12 * 32)
+        self.assertEqual(frames[:32], pacman_sprite_patterns(self.chr_data)[:32])
+        self.assertEqual(frames[-32:], bytes(32))  # NES frame 1D is blank
+        advance(cpu, vdp, 120)
+        self.assertNotEqual(vdp.ram[6912], 208)
+        self.assertEqual(row(11, 8, 6), cpu.memory[0xc000 + 11 * 22 + 8:0xc000 + 11 * 22 + 14])
+        self.assertEqual(row(13, 10, 3), cpu.memory[0xc000 + 13 * 22 + 10:0xc000 + 13 * 22 + 13])
+        self.assertEqual(row(16, 8, 6), bytes(range(224, 230)))
+        advance(cpu, vdp, 130)
+        self.assertEqual(row(16, 8, 6), cpu.memory[0xc000 + 16 * 22 + 8:0xc000 + 16 * 22 + 14])
+
+    def test_nes_death_freeze_animation_sound_and_life_timing(self):
+        cpu, vdp = self.new_game()
+        for n in range(1, 4):
+            cpu.memory[0xc293 + n * 8] = 255
+        cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 28, 1
+        cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc293] = 20, 28, 0
+        cpu.memory[0xc296], cpu.memory[0xc27f] = 0, 0
+        advance(cpu, vdp, 1)
+        self.assertEqual((cpu.memory[0xc313], cpu.memory[0xc314]), (1, 128))
+        self.assertEqual(vdp.ram[6914], 180)  # NES death frame 12
+        self.assertEqual(cpu.memory[0xc27e], 3)
+        position = bytes(cpu.memory[0xc262:0xc264])
+        advance(cpu, vdp, 127)
+        self.assertEqual(bytes(cpu.memory[0xc262:0xc264]), position)
+        self.assertEqual(cpu.memory[0xc313], 1)
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc313], 2)
+        self.assertEqual(cpu.memory[0xc283], 2)
+        self.assertEqual(vdp.ram[6916], 208)  # hide ghosts during animation
+        for frame in range(1, 12):
+            advance(cpu, vdp, 11)
+            self.assertEqual(cpu.memory[0xc315], frame)
+            self.assertEqual(vdp.ram[6914], (45 + frame) * 4)
+            self.assertEqual(cpu.memory[0xc27e], 3)
+        advance(cpu, vdp, 11)
+        self.assertEqual(cpu.memory[0xc313], 0)
+        self.assertEqual(cpu.memory[0xc27e], 2)
+        self.assertEqual(vdp.ram[6518:6528], b'READY     ')
+
     def test_death_release_targets_are_relative_to_eaten_dots(self):
         cpu, vdp = self.new_game()
         cpu.memory[0xc27c] = 150  # 42 already eaten
@@ -298,6 +362,8 @@ class GameplayTests(unittest.TestCase):
         cpu.memory[0xc293], cpu.memory[0xc296] = 0, 0
         cpu.memory[0xc27f] = 0
         advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc313], 1)
+        advance(cpu, vdp, 260)
         self.assertEqual(cpu.memory[0xc27e], 2)
         self.assertEqual([cpu.memory[0xc296 + n * 8] for n in range(4)], [0, 3, 3, 3])
         self.assertEqual(list(cpu.memory[0xc30e:0xc311]), [49, 59, 74])
@@ -391,11 +457,15 @@ class GameplayTests(unittest.TestCase):
         cpu.memory[0xc290], cpu.memory[0xc291] = 20, 28
         cpu.memory[0xc293] = 0
         advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc27e], 3)  # life is lost after animation
+        self.assertEqual(cpu.memory[0xc313], 1)
+        advance(cpu, vdp, 260)
         self.assertEqual(cpu.memory[0xc27e], 2)
         self.assertEqual(vdp.ram[6518:6528], b'READY     ')
         self.assertGreater(cpu.memory[0xc281], 0)
         self.assertEqual(cpu.memory[0xc000 + 5 * 22 + 2], 7)
         self.assertEqual(vdp.ram[6742:6750], bytes([60, 61, 32, 32, 32, 32, 32, 32]))
+        advance(cpu, vdp, 192, ghosts_disabled=True)
         # Simulate another hit on the last life and a previously earned high.
         high = bytes([1, 2, 3, 4, 5, 6])
         cpu.set_memory_block(0xc285, high)
@@ -406,10 +476,12 @@ class GameplayTests(unittest.TestCase):
         for ghost in range(1, 4):
             cpu.memory[0xc290 + ghost * 8 + 3] = 255
         advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc27e], 1)
+        advance(cpu, vdp, 260)
         self.assertEqual(cpu.memory[0xc27e], 0)
         self.assertEqual(vdp.ram[6518:6528], b'GAME OVER ')
         self.assertEqual(cpu.memory[0xc28c], 1)
-        advance(cpu, vdp, 160)  # game over resets to title
+        advance(cpu, vdp, 290)  # game over resets to title
         self.assertEqual(vdp.psg[-4:], [159, 191, 223, 255])
         self.assertEqual(bytes(cpu.memory[0xc285:0xc28b]), high)
         vdp.pad = 0xef
@@ -449,6 +521,8 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc283], 3)  # level-clear sound
         self.assertEqual(vdp.ram[6518:6528], b'CLEAR     ')
         advance(cpu, vdp, 95, ghosts_disabled=True)
+        self.assertEqual(vdp.ram[6518:6528], b'READY     ')
+        advance(cpu, vdp, 192, ghosts_disabled=True)
         self.assertEqual(vdp.ram[6518:6528], b'          ')
 
 

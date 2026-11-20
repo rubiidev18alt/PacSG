@@ -20,6 +20,10 @@ init_game_misc_flags:
     ld (49846),a
     ld (49900),a
     ld (49901),a
+    ld (49939),a
+    ld (49943),a
+    ld (49944),a
+    ld (49945),a
     ; Preserve the high score when the game-over path returns to the title.
     ; A four-byte signature avoids treating typical power-on RAM as valid.
     ld a,(49856)
@@ -67,13 +71,39 @@ init_game_misc_flags:
 
 game_frame:
     call sound_frame
+    ld a,(49939)
+    or a
+    jp nz,game_death_tick
     ld a,(49793)
     or a
     jr z,game_active
     dec a
     ld (49793),a
+    jr z,game_pause_done
+    ld b,a
+    ld a,(49944)
+    or a
+    ret z
+    cp b
     ret nz
+    xor a
+    ld (49944),a
+    call draw_maze             ; restore PLAYER/ONE underlying maze cells
+    call player_draw_sprite    ; NES places actors at READY frame $78
+    call ghost_draw
+    jp game_ready_draw_ready    ; READY! remains until the pause ends
+ game_pause_done:
     call game_clear_message
+    ld a,(49945)
+    or a
+    jr z,game_pause_no_level_ready
+    xor a
+    ld (49945),a
+    ld a,192
+    ld (49793),a
+    call game_show_ready
+    ret
+ game_pause_no_level_ready:
     ld a,(49804)
     or a
     jp nz,0                   ; game over: return to title, reset score/maze
@@ -199,6 +229,8 @@ game_next_level:
     ld (49789),a
  game_level_capped:
     call game_reset_positions
+    ld a,1
+    ld (49945),a              ; after clear, enter the READY sequence
     ld a,90
     ld (49793),a
     ld (49794),a
@@ -216,10 +248,67 @@ game_next_level:
     call display_on
     ret
 
-; Temporary status text is placed in the fixed HUD and erased after the pause.
+ ; READY uses the exact NES sprite glyphs as temporary background tiles.
+; This avoids using 15 scarce TMS sprites and restores the RAM maze afterward.
 game_show_ready:
+    ld de,6912                 ; NES hides actors until READY frame $78
+    call set_vram_write
+    ld a,208
+    out (190),a
+    ld a,1
+    ld (49943),a
+    ld a,(49793)
+    sub 120
+    jr nc,game_ready_store_hide_time
+    xor a
+ game_ready_store_hide_time:
+    ld (49944),a
     ld hl,game_ready_text
-    jr game_write_message
+    call game_write_message
+    call game_ready_draw_ready
+    ld d,11                   ; PLAYER at NES $44,$60, adjusted for viewport
+    ld e,8
+    ld hl,game_player_glyphs
+    ld bc,6
+    call game_ready_write_row
+    ld d,13                   ; ONE at NES $50,$70
+    ld e,10
+    ld hl,game_one_glyphs
+    ld bc,3
+    jp game_ready_write_row
+
+game_ready_draw_ready:
+    ld d,16                   ; READY! at NES $44,$88
+    ld e,8
+    ld hl,game_ready_glyphs
+    ld bc,6
+    jp game_ready_write_row
+
+; D=world tile row, E=column, HL=glyphs, BC=count.
+game_ready_write_row:
+    push hl
+    push bc
+    ld a,(49760)
+    ld b,a
+    ld a,d
+    sub b
+    ld l,a
+    ld h,0
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    add hl,hl
+    ld d,0
+    add hl,de
+    ld de,6144
+    add hl,de
+    ex de,hl
+    call set_vram_write
+    pop bc
+    pop hl
+    jp write_vram_block
+
 game_show_over:
     ld hl,game_over_text
     jr game_write_message
@@ -227,6 +316,14 @@ game_show_clear:
     ld hl,game_clear_text
     jr game_write_message
 game_clear_message:
+    ld a,(49943)
+    or a
+    jr z,game_clear_hud_message
+    xor a
+    ld (49943),a
+    ld (49944),a
+    call draw_maze
+ game_clear_hud_message:
     ld hl,game_blank_text
  game_write_message:
     ld de,6518                ; row 11, column 22
@@ -237,6 +334,9 @@ game_clear_message:
  game_over_text:  defb 71,65,77,69,32,79,86,69,82,32
  game_clear_text: defb 67,76,69,65,82,32,32,32,32,32
  game_blank_text: defb 32,32,32,32,32,32,32,32,32,32
+ game_ready_glyphs:  defb 224,225,226,227,228,229
+ game_player_glyphs: defb 230,231,232,233,234,235
+ game_one_glyphs:    defb 236,237,238
 
 ; High score, lives and round occupy fixed HUD addresses, not the scroll area.
 game_draw_high:

@@ -164,6 +164,54 @@ def pacman_sprite_patterns(chr_data):
     return bytes(result)
 
 
+# NES death frames 12..1D from tbl_actor_sprite_tiles/attrs.
+DEATH_FRAMES = (
+    ((0x00, 0x00, 0x00, 0x00), (0x00, 0x40, 0x80, 0xc0)),
+    ((0x09, 0x09, 0x0a, 0x0a), (0x00, 0x40, 0x00, 0x40)),
+    ((0x0b, 0x0b, 0x0c, 0x0c), (0x00, 0x40, 0x00, 0x40)),
+    *(((0x4c, 0x4c, tile, tile), (0x00, 0x00, 0x00, 0x40))
+      for tile in range(0x0d, 0x14)),
+    ((0x14, 0x15, 0x16, 0x17), (0, 0, 0, 0)),
+    ((0x4c, 0x4c, 0x4c, 0x4c), (0, 0, 0, 0)),
+)
+
+
+def death_sprite_patterns(chr_data):
+    """Compose the NES death OAM frames into 16x16 TMS masks."""
+    if len(chr_data) != 8192:
+        raise ValueError('expected 8192 bytes of NES CHR data')
+    out = bytearray()
+    for tiles, attrs in DEATH_FRAMES:
+        quads = []
+        for tile, attr in zip(tiles, attrs):
+            data = chr_data[4096 + tile * 16:4096 + (tile + 1) * 16]
+            rows = [data[y] | data[y + 8] for y in range(8)]
+            if attr & 0x80:
+                rows.reverse()
+            if attr & 0x40:
+                rows = [int(f'{v:08b}'[::-1], 2) for v in rows]
+            quads.append(bytes(rows))
+        for index in (0, 2, 1, 3):
+            out.extend(quads[index])
+    return bytes(out)
+
+
+READY_GLYPHS = (0xc6, 0xc3, 0xc1, 0xba, 0xc7, 0xbb,
+                0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5,
+                0xb6, 0xb7, 0xb4)
+
+
+def ready_text_patterns(chr_data):
+    """NES READY!, PLAYER and ONE sprite glyphs adapted as background tiles."""
+    if len(chr_data) != 8192:
+        raise ValueError('expected 8192 bytes of NES CHR data')
+    result = bytearray()
+    for tile in READY_GLYPHS:
+        data = chr_data[4096 + tile * 16:4096 + (tile + 1) * 16]
+        result.extend(data[y] | data[y + 8] for y in range(8))
+    return bytes(result)
+
+
 # Normal frames 0A..11 and frightened frames 1E..1F from the NES OAM tables.
 GHOST_FRAMES = (
     ((0x18, 0x18, 0x19, 0x19), (0, 0x40, 0, 0x40)),
@@ -282,6 +330,12 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
         for row in range(tile * 8, tile * 8 + 8):
             fg, bg = colors[row] >> 4, colors[row] & 15
             colors[row] = ((11 if fg == 15 else fg) << 4) | (11 if bg == 15 else bg)
+    # Text uses background tiles to avoid the TMS9918's four-sprites-per-line
+    # limit. These IDs do not occur in the decoded maze or the HUD.
+    ready_patterns = ready_text_patterns(chr_data)
+    patterns[0xe0 * 8:0xef * 8] = ready_patterns
+    colors[0xe0 * 8:0xe6 * 8] = bytes([0xb1] * (6 * 8))  # yellow
+    colors[0xe6 * 8:0xef * 8] = bytes([0x71] * (9 * 8))  # cyan
     title_patterns, title_colors, title_names = title_assets(chr_data, logo, title_palette)
     with tempfile.TemporaryDirectory() as tmp:
         asm = Path(tmp) / 'viewer.asm'
@@ -290,6 +344,7 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
                        (ROOT / 'src/sg1000/maze.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/player.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/game.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/death.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/ghosts.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/sound.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/fruit.asm').read_text() + '\n' +
@@ -303,7 +358,8 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
                        table('pacman_sprite_data', pacman_sprite_patterns(chr_data) +
                              ghost_sprite_patterns(chr_data) +
                              ghost_sprite_patterns(chr_data, eyes=True) +
-                             fruit_sprite_patterns(chr_data)))
+                             fruit_sprite_patterns(chr_data) +
+                             death_sprite_patterns(chr_data)))
         subprocess.run([assembler, '--obj=' + str(binary), str(asm)], check=True)
         rom = binary.read_bytes()
     if len(rom) > 49152:

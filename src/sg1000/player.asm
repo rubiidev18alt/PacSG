@@ -544,6 +544,15 @@ player_sprite_normal_x:
     ld b,11
 player_sprite_x_ready:
     out (190),a
+    ld a,(49939)
+    or a
+    jr z,player_sprite_live_animation
+    ld a,(49941)
+    add a,45                  ; death masks follow fruit patterns
+    add a,a
+    add a,a
+    jr player_sprite_pattern_ready
+ player_sprite_live_animation:
     ld a,(49761)
     and 7
     cp 6

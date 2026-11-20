@@ -22,8 +22,12 @@ The prototype includes walls and tunnel wrapping, dots and energizers,
 200/400/800/1600-point ghost chains. Eaten ghosts return as eyes to the
 house entrance. Fruit appears at the original pellet thresholds, with the
 round-dependent fruit and scores; it uses two extra sprite layers rather than
-erasing maze tiles. A ghost hit costs a life and respawns the
-actors without resetting the dots; losing the last life returns to the title.
+erasing maze tiles. READY!, PLAYER and ONE use the NES sprite glyphs, drawn as
+temporary maze background tiles to avoid the sprite-per-scanline limit; the
+underlying map is restored before play. The NES-derived death sequence freezes
+at the collision, hides the ghosts, plays the death sound and steps through the
+original CHR/OAM frames before deducting a life. The actors then respawn without
+resetting dots; losing the last life shows GAME OVER and returns to the title.
 Clearing all 192 dots starts the next round with the maze restored. The HUD has
 NES-derived score labels and life icons, a working score/high score, a one-time
 extra life at 10,000, and a numeric round indicator. The high score is retained
@@ -95,6 +99,7 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m unittest discover -s tests/sg100
 * `src/sg1000/ghosts.asm` implements ghost targeting, release, house movement,
   collisions, frightened sprites and sprite-priority rotation.
 * `src/sg1000/fruit.asm` manages the bonus fruit, scoring and sprite layers.
+* `src/sg1000/death.asm` manages the death freeze, animation and life transition.
 * `src/sg1000/game.asm` manages lives, high score, game over and level reset;
   `src/sg1000/sound.asm` manages the siren and event-sound channels.
 * `src/sg1000/maze_viewer.asm` sets up the TMS9918 title, maze and HUD;
