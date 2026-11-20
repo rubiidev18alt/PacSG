@@ -1,5 +1,5 @@
 ; Post-eat score freeze. C31A countdown, C31B NES pause accumulator,
-; C31C eaten ghost slot, C31D score-popup index, C31E eyes-only flag.
+; C31C eaten ghost slot, C31D score-popup index.
 ; Sprite zero is temporarily the popup, hiding Pac-Man and giving the score
 ; priority over other hardware sprites on the same scanline.
 ghost_popup_draw:
@@ -39,7 +39,7 @@ ghost_popup_draw:
 ghost_popup_tick:
     dec a                    ; A = nonzero popup frames remaining
     ld (49946),a
-    jr nz,ghost_popup_update_eyes
+    ret nz                    ; no simulation, sprite or sound updates
     ; Release the just-eaten ghost as eyes; the NES retains a value of 2
     ; in its pause accumulator for subsequent captures in the same round.
     ld a,2
@@ -56,5 +56,5 @@ ghost_popup_tick:
     pop ix
     ld (ix+6),1
     call player_draw_sprite
- ghost_popup_update_eyes:
-    jp ghost_eyes_frame
+    call ghost_draw
+    jp sound_unfreeze

@@ -21,8 +21,10 @@ while the HUD stays fixed: the 27-row NES maze is taller than the TMS9918's
 The prototype includes walls and tunnel wrapping, dots and energizers,
 10/50-point scoring, a frightened timer, flashing frightened ghosts, and
 200/400/800/1600-point ghost chains. Eating a ghost briefly freezes the action,
-shows its NES-derived point sprite, and then sends it home as eyes. Previously
-returning eyes continue moving during this pause. Fruit appears at the original pellet thresholds, with the
+shows its NES-derived point sprite, and then sends it home as eyes. During the
+pause all actors, animations, timers, and sound sequencers are frozen; the PSG
+is muted and its previous tone volumes are restored when play resumes. This
+intentionally differs from the NES, where previously returning eyes keep moving. Fruit appears at the original pellet thresholds, with the
 round-dependent fruit and scores; it uses two extra sprite layers rather than
 erasing maze tiles. READY!, PLAYER and ONE use the NES sprite glyphs, drawn as
 temporary maze background tiles to avoid the sprite-per-scanline limit; the

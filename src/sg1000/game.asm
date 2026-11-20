@@ -70,13 +70,14 @@ init_game_misc_flags:
     ret
 
 game_frame:
+    ; The score freeze holds the entire simulation and sound sequencers.
+    ld a,(49946)
+    or a
+    jp nz,ghost_popup_tick
     call sound_frame
     ld a,(49939)
     or a
     jp nz,game_death_tick
-    ld a,(49946)
-    or a
-    jp nz,ghost_popup_tick
     ld a,(49793)
     or a
     jr z,game_active

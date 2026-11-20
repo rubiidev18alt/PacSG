@@ -147,7 +147,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(vdp.ram[6390:6397], b'   3050')
         self.assertEqual(cpu.memory[0xc280], 3)  # capped chain index
 
-    def test_ghost_score_popup_freezes_play_and_moves_prior_eyes(self):
+    def test_ghost_score_popup_freezes_all_actors_audio_and_timers(self):
         cpu, vdp = self.new_game()
         self.assertEqual(vdp.ram[14336 + 1824:14336 + 1952],
                          ghost_score_sprite_patterns(self.chr_data))
@@ -157,7 +157,7 @@ class GameplayTests(unittest.TestCase):
         cpu.memory[0xc27f], cpu.memory[0xc2d4] = 100, 0
         cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 20, 28, 1
         cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
-        # A previous ghost's returning eyes move; another active ghost freezes.
+        # Returning eyes, active ghosts and all other actors must freeze.
         cpu.memory[0xc298], cpu.memory[0xc299], cpu.memory[0xc29a] = 52, 68, 1
         cpu.memory[0xc29b], cpu.memory[0xc29e] = 0, 1
         cpu.memory[0xc2a0], cpu.memory[0xc2a1] = 132, 68
@@ -175,12 +175,24 @@ class GameplayTests(unittest.TestCase):
         frightened = cpu.memory[0xc27f]
         frame_counter = cpu.memory[0xc261]
         release_ticks = bytes(cpu.memory[0xc30c:0xc30e])
+        sound_state = bytes(cpu.memory[0xc2f7:0xc307])
+        sound_request = bytes(cpu.memory[0xc282:0xc284])
+        saved_volumes = bytes(cpu.memory[0xc31f:0xc322])
+        self.assertEqual(vdp.psg[-4:], [159, 191, 223, 255])
+        psg_len = len(vdp.psg)
+        display = bytes(vdp.ram)
+        ghosts = bytes(cpu.memory[0xc290:0xc2b0])
         advance(cpu, vdp, 39)
         self.assertEqual(cpu.memory[0xc31a], 1)
         self.assertEqual(cpu.memory[0xc296], 6)
         self.assertEqual(bytes(cpu.memory[0xc262:0xc264]), pac)
         self.assertEqual(bytes(cpu.memory[0xc2a0:0xc2a2]), other)
-        self.assertNotEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)
+        self.assertEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)
+        self.assertEqual(bytes(cpu.memory[0xc290:0xc2b0]), ghosts)
+        self.assertEqual(bytes(cpu.memory[0xc2f7:0xc307]), sound_state)
+        self.assertEqual(bytes(cpu.memory[0xc282:0xc284]), sound_request)
+        self.assertEqual(len(vdp.psg), psg_len)  # no audio sequencer/PSG writes
+        self.assertEqual(bytes(vdp.ram), display)  # no animation or redraw
         self.assertEqual(cpu.memory[0xc27f], frightened)
         self.assertEqual(cpu.memory[0xc261], frame_counter)
         self.assertEqual(bytes(cpu.memory[0xc30c:0xc30e]), release_ticks)
@@ -190,12 +202,50 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc296], 1)
         self.assertNotEqual(vdp.ram[6914], 228)  # Pac-Man reappears
         self.assertEqual(cpu.memory[0xc31b], 2)
+        self.assertEqual(bytes(vdp.psg[psg_len:]), saved_volumes)
+        self.assertEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)  # no final-frame step
+        self.assertEqual(bytes(cpu.memory[0xc2f7:0xc307]), sound_state)
+        advance(cpu, vdp, 1)
+        self.assertNotEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)
+        self.assertIn(212, vdp.psg[psg_len + 3:])  # ghost-eat SFX starts after pause
         # A second ghost awards 400 and uses the NES's 38-frame repeat pause.
         cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 20, 28, 1
         cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
         advance(cpu, vdp, 1)
         self.assertEqual(cpu.memory[0xc31a], 38)
         self.assertEqual(vdp.ram[6914], 232)
+
+    def test_popup_silences_and_restores_held_psg_notes_without_advancing(self):
+        cpu, vdp = self.new_game()
+        # Start a long extra-life tone and schedule a pellet chomp on tone 0.
+        cpu.memory[0xc282], cpu.memory[0xc283] = 60, 5
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 12, 1
+        cpu.memory[0xc000 + 22 + 2] = 3
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        # Trigger the collision after all three tone channels have been active.
+        cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
+        cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        cpu.memory[0xc27f], cpu.memory[0xc2d4] = 100, 0
+        cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 20, 28, 1
+        cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc31a], 40)
+        self.assertEqual(bytes(cpu.memory[0xc31f:0xc322]), bytes([148, 185, 212]))
+        self.assertEqual(vdp.psg[-4:], [159, 191, 223, 255])
+        state = bytes(cpu.memory[0xc2f7:0xc307])
+        pending = bytes(cpu.memory[0xc282:0xc284])
+        start = len(vdp.psg)
+        advance(cpu, vdp, 39)
+        self.assertEqual(vdp.psg[start:], [])
+        self.assertEqual(bytes(cpu.memory[0xc2f7:0xc307]), state)
+        self.assertEqual(bytes(cpu.memory[0xc282:0xc284]), pending)
+        advance(cpu, vdp, 1)
+        self.assertEqual(vdp.psg[start:], [148, 185, 212])
+        self.assertEqual(bytes(cpu.memory[0xc2f7:0xc307]), state)
+        self.assertEqual(bytes(cpu.memory[0xc282:0xc284]), pending)
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc282], 39)  # queued ghost sound begins
+        self.assertNotEqual(bytes(cpu.memory[0xc2f7:0xc307]), state)
 
     def test_score_popup_scroll_and_tunnel_early_clock(self):
         cpu, vdp = self.new_game()

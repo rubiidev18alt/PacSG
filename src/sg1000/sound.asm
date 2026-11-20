@@ -48,7 +48,7 @@ sound_event_tick:
     jr z,sound_event_stream_ready
     ; No corresponding NES sound stream for the level-clear cue.
     ld a,223
-    out (127),a
+    call sound_write_volume
     ld hl,0
  sound_event_stream_ready:
     ld (49911),hl
@@ -159,8 +159,7 @@ sound_stop_chomp:
     ld (49917),a
     ld (49918),a
     ld a,159
-    out (127),a
-    ret
+    jp sound_write_volume
 
 ; The two READY voices are compiled from the verified NES note streams.
 ; The NTSC APU and SN76489 clocks have equivalent tone divisors; volume and
@@ -183,6 +182,12 @@ sound_ready_init:
     djnz sound_clear_event_state
     ld a,255
     ld (49926),a
+    ld a,159
+    ld (49951),a
+    ld a,191
+    ld (49952),a
+    ld a,223
+    ld (49953),a
     ret
 
 sound_ready_frame:
@@ -190,10 +195,9 @@ sound_ready_frame:
     ld (49904),a
     jr nz,sound_ready_play
     ld a,159
-    out (127),a
+    call sound_write_volume
     ld a,191
-    out (127),a
-    ret
+    jp sound_write_volume
  sound_ready_play:
     ld ix,49905
     ld c,128                  ; channel 0 latch
@@ -230,7 +234,7 @@ sound_ready_voice:
     ld a,(hl)
     out (127),a
     ld a,e
-    out (127),a
+    call sound_write_volume
     jr sound_ready_store_pointer
  sound_ready_hold_advance:
  sound_ready_store_pointer:
@@ -244,5 +248,43 @@ sound_ready_voice:
     ld (ix+1),a
     ld a,c
     add a,31
+    jp sound_write_volume
+
+; Track the last volume latch for each tone. The PSG keeps its frequency
+; registers during the score freeze, so restoring these latches resumes the
+; exact held notes without advancing any stream. A is preserved.
+sound_write_volume:
+    out (127),a
+    cp 176
+    jr c,sound_volume_0
+    cp 208
+    jr c,sound_volume_1
+    ld (49953),a
+    ret
+ sound_volume_0:
+    ld (49951),a
+    ret
+ sound_volume_1:
+    ld (49952),a
+    ret
+
+sound_freeze:
+    ; Do not modify the saved volume latches while muting the hardware.
+    ld a,159
+    out (127),a
+    ld a,191
+    out (127),a
+    ld a,223
+    out (127),a
+    ld a,255
+    out (127),a
+    ret
+
+sound_unfreeze:
+    ld a,(49951)
+    out (127),a
+    ld a,(49952)
+    out (127),a
+    ld a,(49953)
     out (127),a
     ret

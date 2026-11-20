@@ -30,7 +30,7 @@ game_death_tick:
     ld a,2
     ld (49795),a              ; play original NES death stream
     ld a,191
-    out (127),a              ; stop ghost siren while ghosts disappear
+    call sound_write_volume  ; stop ghost siren while ghosts disappear
     call player_draw_sprite  ; its terminator hides all ghosts and fruit
     ret
  game_death_advance:
