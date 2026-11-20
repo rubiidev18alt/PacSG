@@ -92,10 +92,12 @@ def title_assets(chr_data, logo, nes_palette):
         for x, character in enumerate(text):
             if character != ' ':
                 cells[row][start + x] = (256 if character == ',' else ord(character), 0)
-    # NES title logo tiles spell "namco" followed by a trademark emblem.
-    # Use the wordmark alone, with no trailing emblem or added T.
+    # The NES CHR wordmark spells "namco"; keep it without a trailing T or
+    # the original emblem and render the lettering red on black. The small
+    # registered-trademark symbol sits above the wordmark's right edge.
     for x in range(8):
-        cells[22][12 + x] = (0x23 + x, 1)
+        cells[22][12 + x] = (0x23 + x, 4)  # special red wordmark palette
+    cells[21][20] = (257, 0)  # small circled R, raised at the top right
     names = bytearray()
     patterns = bytearray(2048)
     colors = bytearray([0x11] * 2048)
@@ -110,11 +112,15 @@ def title_assets(chr_data, logo, nes_palette):
                 if tile == 256:  # comma absent from the NES title font
                     p = bytes([0, 0, 0, 0, 0, 0x18, 0x18, 0x10])
                     c = bytes([0x11] * 5 + [0xf1] * 3)
+                elif tile == 257:  # 7x7 registered-trademark mark, red on black
+                    p = bytes([0x78, 0x84, 0xb4, 0xb4, 0xac, 0x84, 0x78, 0])
+                    c = bytes([0x81] * 8)
                 else:
                     data = chr_data[tile * 16:(tile + 1) * 16]
                     if tile == 0x2a:  # last wordmark tile: remove emblem at x>=60
                         data = bytes(value & 0xf0 for value in data)
-                    p, c, _ = convert(data, palettes[pal], True)
+                    palette = [1, 8, 8, 8] if pal == 4 else palettes[pal]
+                    p, c, _ = convert(data, palette, True)
                 key = (p, c)
                 if key not in unique:
                     index = len(unique)

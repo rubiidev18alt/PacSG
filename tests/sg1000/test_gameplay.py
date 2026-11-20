@@ -58,8 +58,14 @@ class GameplayTests(unittest.TestCase):
             bitmap = self.chr_data[tile * 16:(tile + 1) * 16]
             if x == 7:
                 bitmap = bytes(value & 0xf0 for value in bitmap)
-            p, c, _ = convert(bitmap, [1, 9, 15, 11], True)
+            p, c, _ = convert(bitmap, [1, 8, 8, 8], True)
             self.assertEqual(cell(22, 12 + x), (p, c))
+            # Neither foreground nor background uses a color other than red
+            # or black, including rows which are entirely one color.
+            self.assertTrue(all((v >> 4) in (1, 8) and (v & 15) in (1, 8) for v in c))
+        self.assertEqual(cell(21, 20),
+                         (bytes([0x78, 0x84, 0xb4, 0xb4, 0xac, 0x84, 0x78, 0]),
+                          bytes([0x81] * 8)))
         self.assertEqual(names[22 * 32 + 20], 0)  # no trailing T/emblem
 
     def test_ghosts_move_and_psg_voices_are_independent(self):
