@@ -309,6 +309,12 @@ player_clear_pellet:
     jr z,player_dot_count_done
     dec a
     ld (49788),a
+    cp 134
+    call z,fruit_spawn
+    cp 55
+    call z,fruit_spawn
+    ld a,(49788)
+    or a
     jr nz,player_dot_count_done
     ld a,1
     ld (49846),a              ; complete the round after this frame

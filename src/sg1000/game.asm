@@ -18,6 +18,8 @@ init_game_misc_flags:
     inc hl
     djnz init_game_misc_flags
     ld (49846),a
+    ld (49900),a
+    ld (49901),a
     ; Preserve the high score when the game-over path returns to the title.
     ; A four-byte signature avoids treating typical power-on RAM as valid.
     ld a,(49856)
@@ -58,6 +60,9 @@ init_game_misc_flags:
     ld a,192
     ld (49788),a              ; NES v1.0 dot count
     call ghost_init
+    call sound_ready_init
+    ld a,250
+    ld (49793),a             ; pause while the two-voice READY tune plays
     ret
 
 game_frame:
@@ -89,6 +94,7 @@ game_frame:
     ld (49791),a
  game_power_tick_done:
     call player_frame
+    call fruit_tick
     ld a,(49846)
     or a
     jr z,game_ghost_tick
@@ -117,6 +123,10 @@ game_commit_score:
     inc a
     ld (49790),a
     call game_draw_lives
+    ld a,60
+    ld (49794),a
+    ld a,5
+    ld (49795),a
  game_compare_high:
     ld hl,49781
     ld de,49802
@@ -155,6 +165,8 @@ game_reset_positions:
     ld (49791),a
     ld (49792),a
     ld (49876),a
+    ld (49900),a
+    ld (49901),a
     call ghost_init
     ret
 

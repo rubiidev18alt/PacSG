@@ -196,7 +196,7 @@ color_bank_loop:
     ld de,14336
     call set_vram_write
     ld hl,pacman_sprite_data
-    ld bc,928
+    ld bc,1440
     call write_vram_block
     call player_init
     call game_init
@@ -225,6 +225,7 @@ clear_names_loop:
     call player_draw_score
     call player_draw_sprite
     call ghost_draw
+    call game_show_ready
     call display_on
 
 frame_loop:

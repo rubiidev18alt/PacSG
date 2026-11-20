@@ -1,5 +1,6 @@
 ; Four SG-1000 ghost approximations. Each C290 record is eight bytes:
-; X, Y, direction, release/respawn wait, TMS color, fractional speed, two reserved bytes.
+; X, Y, direction, release/respawn wait, color, speed fraction,
+; state (0 normal, 1 returning eyes, 2 recovered immune), reserved.
 ; Ghosts use two NES-derived sprite masks: colored body plus white eyes.
 ; The TMS9918's four-sprites-per-scanline limit is mitigated by rotating ghost
 ; priority, but layered sprites can flicker/drop when many actors overlap.
@@ -69,6 +70,9 @@ ghost_reverse_all:
     ld a,(ix+3)
     or a
     jr nz,ghost_frighten_next
+    ld a,(ix+6)
+    or a
+    jr nz,ghost_frighten_next
     ld a,(ix+2)
     xor 2
     ld (ix+2),a
@@ -97,6 +101,29 @@ ghost_frame:
     ld (ix+3),a
     jp ghost_next
  ghost_released:
+    ld a,(ix+6)
+    cp 2
+    jr nz,ghost_check_returning
+    ld a,(49791)
+    or a
+    jr nz,ghost_fractional_move
+    ld (ix+6),0
+    jr ghost_fractional_move
+ ghost_check_returning:
+    cp 1
+    jr nz,ghost_fractional_move
+    ld a,(ix+0)
+    cp 92
+    jp nz,ghost_move
+    ld a,(ix+1)
+    cp 84
+    jp nz,ghost_move
+    ; Eyes reached the house entrance. Wait briefly before re-emerging.
+    ld (ix+6),2
+    ld (ix+3),60
+    ld (ix+2),1
+    jp ghost_next
+ ghost_fractional_move:
     ; NES-style fixed-point fraction: accumulate each ghost's stage/mode
     ; speed and move one pixel on carry (late-stage speeds are capped at 1).
     call ghost_speed_fraction
@@ -188,9 +215,13 @@ ghost_frame:
 ; Normal, frightened and tunnel fractions from the NTSC level profiles.
 ; Blinky's level-one pellet thresholds use the two original boosted speeds.
 ghost_speed_fraction:
+    ld a,(ix+6)
+    or a
+    jr nz,ghost_speed_normal_check
     ld a,(49791)
     or a
     jr nz,ghost_slow_fraction
+ ghost_speed_normal_check:
     ld a,(ix+1)
     cp 108                    ; tunnel row
     jr nz,ghost_normal_fraction
@@ -314,9 +345,46 @@ ghost_choose_direction:
     ld a,(ix+2)
     xor 2
     ld (49847),a
+    ld a,(ix+6)
+    cp 1
+    jr nz,ghost_choose_not_eyes
+    ; Eyes may reverse and follow a maze-specific shortest route to the
+    ; entrance; greedy targeting can loop forever around the central walls.
+    ld a,(49762)
+    srl a
+    srl a
+    srl a
+    ld e,a
+    ld a,(49763)
+    srl a
+    srl a
+    srl a
+    ld d,a
+    call player_map_address
+    ld de,49152
+    or a
+    sbc hl,de
+    ld de,ghost_eye_routes
+    add hl,de
+    ld a,(hl)
+    cp 4
+    jr nc,ghost_eyes_no_route
+    ld (ix+2),a
+    xor a
+    ret
+ ghost_eyes_no_route:
+    ld a,92
+    ld (49842),a
+    ld a,84
+    ld (49843),a
+    jp ghost_rank_target
+ ghost_choose_not_eyes:
+    or a
+    jr nz,ghost_choose_normal_mode
     ld a,(49791)
     or a
     jp nz,ghost_seeded_choice
+ ghost_choose_normal_mode:
     ld a,(49872)
     and 1
     jr nz,ghost_chase_target
@@ -529,8 +597,11 @@ ghost_ranked_directions:
     xor a
     ret
 
-; Approximate collision radius. Eaten ghosts wait, then respawn in the maze.
+; Approximate collision radius. Eaten ghosts become returning eyes.
 ghost_collide:
+    ld a,(ix+6)
+    cp 1
+    ret z
     ld a,(ix+0)
     ld b,a
     ld a,(49805)
@@ -549,6 +620,9 @@ ghost_collide:
  ghost_dy_positive:
     cp 7
     ret nc
+    ld a,(ix+6)
+    or a
+    jr nz,ghost_player_hit
     ld a,(49791)
     or a
     jr z,ghost_player_hit
@@ -577,10 +651,8 @@ ghost_collide:
     ld (49792),a
  ghost_combo_capped:
     call game_commit_score
-    ld (ix+0),52
-    ld (ix+1),68
-    ld (ix+2),1
-    ld (ix+3),90
+    ld (ix+6),1               ; return as eyes, do not teleport
+    ld (ix+5),0
     ld a,40
     ld (49794),a
     ld a,1
@@ -659,6 +731,7 @@ ghost_draw:
     ld (49840),a
     pop bc
     djnz ghost_draw_loop
+    call fruit_draw
     ld a,208
     out (190),a
     ret
@@ -678,10 +751,24 @@ ghost_draw_one:
     cp 200
     jp nc,ghost_draw_hidden
     sub 9
-    ld (49860),a              ; sprite Y, same for both layers
+    ld (49860),a              ; screen Y for the eye layer
+    ld a,(ix+6)
+    cp 1
+    ld a,(49860)
+    jr nz,ghost_draw_body_y_ready
+    ld a,209                  ; returning eyes use only one scanline slot
+ ghost_draw_body_y_ready:
     out (190),a
     ld a,(ix+4)
     ld b,a                    ; body color, later possibly early clock
+    ld a,(ix+6)
+    or a
+    jr z,ghost_draw_check_frightened
+    cp 1
+    jr nz,ghost_draw_color_ready
+    ld b,0                    ; transparent body, keep eye sprite
+    jr ghost_draw_color_ready
+ ghost_draw_check_frightened:
     ld a,(49791)
     or a
     jr z,ghost_draw_color_ready
@@ -716,6 +803,9 @@ ghost_draw_one:
     jr z,ghost_draw_phase_ready
     inc c
  ghost_draw_phase_ready:
+    ld a,(ix+6)
+    or a
+    jr nz,ghost_draw_normal_pattern
     ld a,(49791)
     or a
     jr z,ghost_draw_normal_pattern

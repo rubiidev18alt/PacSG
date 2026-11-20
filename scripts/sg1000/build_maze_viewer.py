@@ -205,6 +205,50 @@ def ghost_sprite_patterns(chr_data, *, eyes=False):
     return bytes(result)
 
 
+def fruit_sprite_patterns(chr_data):
+    """Two disjoint TMS layers for the eight NES fruit actor frames 24..2B."""
+    if len(chr_data) != 8192:
+        raise ValueError('expected 8192 bytes of NES CHR data')
+    result = bytearray()
+    for layer in range(2):
+        for fruit in range(8):
+            tiles = [0x90 + fruit * 4 + n for n in range(4)]
+            for quad in (0, 2, 1, 3):  # TMS TL, BL, TR, BR
+                start = 4096 + tiles[quad] * 16
+                data = chr_data[start:start + 16]
+                for y in range(8):
+                    lo, hi = data[y], data[y + 8]
+                    # NES index 1 versus indices 2/3, both transparent at 0.
+                    result.append((lo & ~hi) & 255 if layer == 0 else hi)
+    return bytes(result)
+
+
+def eye_routes(maze):
+    """Shortest legal exit back to the ghost-house entrance for each tile."""
+    from collections import deque
+    tiles, _ = decode(maze)
+    routes = bytearray([255] * (22 * 27))
+    goal = 10 * 22 + 11
+    routes[goal] = 254
+    queue = deque([goal])
+    directions = ((0, -1), (-1, 0), (0, 1), (1, 0))
+    while queue:
+        tile = queue.popleft()
+        x, y = tile % 22, tile // 22
+        for direction, (dx, dy) in enumerate(directions):
+            nx, ny = x + dx, y + dy
+            if y == 13 and nx in (-1, 22):
+                nx %= 22
+            if not (0 <= nx < 22 and 0 <= ny < 27):
+                continue
+            neighbor = ny * 22 + nx
+            if tiles[neighbor] & 0xf0 or routes[neighbor] != 255:
+                continue
+            routes[neighbor] = direction ^ 2
+            queue.append(neighbor)
+    return bytes(routes)
+
+
 def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
     _, used = decode(maze)
     if used != len(maze):
@@ -247,15 +291,17 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
                        (ROOT / 'src/sg1000/game.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/ghosts.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/sound.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/fruit.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/score.asm').read_text() + '\n' +
-                       table('maze_data', maze) + table('pattern_data', patterns) +
+                       table('maze_data', maze) + table('ghost_eye_routes', eye_routes(maze)) + table('pattern_data', patterns) +
                        table('color_data', colors) +
                        table('title_pattern_data', title_patterns) +
                        table('title_color_data', title_colors) +
                        table('title_name_data', title_names) +
                        table('pacman_sprite_data', pacman_sprite_patterns(chr_data) +
                              ghost_sprite_patterns(chr_data) +
-                             ghost_sprite_patterns(chr_data, eyes=True)))
+                             ghost_sprite_patterns(chr_data, eyes=True) +
+                             fruit_sprite_patterns(chr_data)))
         subprocess.run([assembler, '--obj=' + str(binary), str(asm)], check=True)
         rom = binary.read_bytes()
     if len(rom) > 49152:

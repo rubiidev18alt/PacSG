@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from test_maze_viewer import ROOT, advance, make_machine
-from build_maze_viewer import assets_from_rom, build, ghost_sprite_patterns, title_assets
+from build_maze_viewer import assets_from_rom, build, fruit_sprite_patterns, ghost_sprite_patterns, title_assets
 from convert_chr import convert
 
 
@@ -30,6 +30,7 @@ class GameplayTests(unittest.TestCase):
         vdp.pad = 0xef
         advance(cpu, vdp, 15)
         vdp.pad = 0xff
+        advance(cpu, vdp, 242)
         return cpu, vdp
 
     def test_title_disclaimer_and_wordmark_use_expected_tiles(self):
@@ -122,11 +123,12 @@ class GameplayTests(unittest.TestCase):
         for expected in (250, 650, 1450, 3050):
             cpu.memory[0xc290], cpu.memory[0xc291] = 20, 28
             cpu.memory[0xc292], cpu.memory[0xc293] = 1, 0
+            cpu.memory[0xc296] = 0
             advance(cpu, vdp, 1)
             digits = cpu.memory[0xc270:0xc276]
             score = sum(digit * 10 ** (i + 1) for i, digit in enumerate(digits))
             self.assertEqual(score, expected)
-            self.assertGreater(cpu.memory[0xc293], 0)  # ghost waiting to respawn
+            self.assertEqual(cpu.memory[0xc296], 1)  # ghost returns as eyes
             self.assertEqual(cpu.memory[0xc27e], 3)
         self.assertEqual(vdp.ram[6390:6397], b'   3050')
         self.assertEqual(cpu.memory[0xc280], 3)  # capped chain index
@@ -154,6 +156,98 @@ class GameplayTests(unittest.TestCase):
         advance(cpu, vdp, 1, ghosts_disabled=True)
         self.assertEqual(cpu.memory[0xc27f], 255)
         self.assertEqual(cpu.memory[0xc2d4], 0)
+
+    def test_ready_music_plays_before_gameplay(self):
+        cpu, vdp = make_machine(self.rom)
+        advance(cpu, vdp, 210)
+        vdp.pad = 0xef
+        advance(cpu, vdp, 15)
+        vdp.pad = 0xff
+        self.assertGreater(cpu.memory[0xc281], 0)
+        start = len(vdp.psg)
+        position = bytes(cpu.memory[0xc262:0xc264])
+        advance(cpu, vdp, 40)
+        self.assertEqual(bytes(cpu.memory[0xc262:0xc264]), position)
+        writes = vdp.psg[start:]
+        self.assertIn(148, writes)  # first READY voice, PSG tone 0
+        self.assertIn(184, writes)  # second READY voice, PSG tone 1
+        advance(cpu, vdp, 210)
+        self.assertEqual(cpu.memory[0xc281], 0)
+        self.assertEqual(cpu.memory[0xc2f0], 0)
+
+    def test_eyes_follow_a_route_to_house_from_maze(self):
+        cpu, vdp = self.new_game()
+        for n in range(1, 4):
+            cpu.memory[0xc290 + n * 8 + 3] = 255
+        cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
+        cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        cpu.memory[0xc290], cpu.memory[0xc291] = 52, 68
+        cpu.memory[0xc292], cpu.memory[0xc293], cpu.memory[0xc296] = 1, 0, 1
+        advance(cpu, vdp, 150)
+        self.assertEqual(cpu.memory[0xc296], 2)
+        self.assertEqual((cpu.memory[0xc290], cpu.memory[0xc291]), (92, 84))
+        self.assertGreater(cpu.memory[0xc293], 0)
+
+    def test_fruit_threshold_scoring_layers_and_expiry(self):
+        cpu, vdp = self.new_game()
+        self.assertEqual(vdp.ram[14336 + 928:14336 + 1440], fruit_sprite_patterns(self.chr_data))
+        for ghost in range(4):
+            cpu.memory[0xc290 + ghost * 8 + 3] = 255
+        # A dot at the first threshold spawns a cherry for 660 frames.
+        cpu.memory[0xc27c] = 135
+        cpu.memory[0xc000 + 22 + 2] = 3
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 12, 1
+        cpu.memory[0xc260], cpu.memory[0xc261] = 0, 0
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc27c], 134)
+        self.assertEqual(cpu.memory[0xc2ec] + 256 * cpu.memory[0xc2ed], 659)
+        self.assertEqual(vdp.ram[6950], 116)  # cherry green layer pattern
+        self.assertEqual(vdp.ram[6954], 148)  # red layer
+        self.assertEqual(vdp.ram[6956], 208)
+        cpu.memory[0xc262], cpu.memory[0xc263] = 92, 124
+        cpu.memory[0xc261] = 0
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc2ec] + 256 * cpu.memory[0xc2ed], 0)
+        digits = cpu.memory[0xc270:0xc276]
+        self.assertEqual(sum(d * 10 ** (i + 1) for i, d in enumerate(digits)), 110)
+        self.assertEqual(cpu.memory[0xc283], 4)
+        self.assertEqual(vdp.ram[6948], 208)
+        # Later-round key award, and timeout without points.
+        cpu.memory[0xc27d] = 13
+        cpu.memory[0xc2ec], cpu.memory[0xc2ed] = 4, 0
+        cpu.memory[0xc262], cpu.memory[0xc263] = 92, 124
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        digits = cpu.memory[0xc270:0xc276]
+        self.assertEqual(sum(d * 10 ** (i + 1) for i, d in enumerate(digits)), 5110)
+        cpu.memory[0xc2ec], cpu.memory[0xc2ed] = 1, 0
+        cpu.memory[0xc262], cpu.memory[0xc263] = 20, 12
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc2ec], 0)
+        digits = cpu.memory[0xc270:0xc276]
+        self.assertEqual(sum(d * 10 ** (i + 1) for i, d in enumerate(digits)), 5110)
+
+    def test_returning_eyes_are_harmless_and_recover_at_entrance(self):
+        cpu, vdp = self.new_game()
+        for n in range(1, 4):
+            cpu.memory[0xc290 + n * 8 + 3] = 255
+        cpu.memory[0xc262], cpu.memory[0xc263] = 52, 68
+        cpu.memory[0xc290], cpu.memory[0xc291] = 52, 68
+        cpu.memory[0xc293], cpu.memory[0xc296] = 0, 1
+        cpu.memory[0xc27f], cpu.memory[0xc261] = 30, 0
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc27e], 3)
+        self.assertEqual(vdp.ram[6916], 209)  # no body scanline slot
+        self.assertEqual(vdp.ram[6919] & 15, 0)  # transparent ghost body
+        self.assertEqual(vdp.ram[6923] & 15, 15)
+        cpu.memory[0xc290], cpu.memory[0xc291] = 92, 84
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc296], 2)
+        self.assertEqual(cpu.memory[0xc293], 60)
+        cpu.memory[0xc293], cpu.memory[0xc27f] = 0, 0
+        cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
+        cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc296], 0)
 
     def test_death_lives_and_highscore_persists_after_game_over(self):
         cpu, vdp = self.new_game()

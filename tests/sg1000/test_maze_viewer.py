@@ -168,6 +168,7 @@ class ViewerTests(unittest.TestCase):
         vdp.pad = 0xef
         advance(cpu, vdp, 15)
         vdp.pad = 0xff
+        advance(cpu, vdp, 242, ghosts_disabled=True)
         advance(cpu, vdp, 115, ghosts_disabled=True)
         # Pac-Man automatically moves left, eats the five dots and stops at
         # the wall to the left. NES score stores one unit for 10 points.

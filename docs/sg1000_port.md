@@ -2,9 +2,10 @@
 
 The 48 KiB cartridge has the NES-derived title, maze, Pac-Man and four ghosts.
 It is **not a complete or cycle-accurate NES port**: ghost navigation and
-release are simplified, eaten ghosts respawn after a delay rather than returning
-as eyes, and fruit and intermissions are not implemented. Speed and timing profiles
-are approximations, not complete NES behavior. The NES source is 6502 code and cannot run
+release and house transitions are simplified, and intermissions, two-player
+mode and the full NES audio engine are not implemented. Returning eyes use a
+precomputed shortest route rather than the NES's exact navigation. Speed and
+timing profiles are approximations, not complete NES behavior. The NES source is 6502 code and cannot run
 unchanged on the SG-1000's Z80.
 
 ## Controls and current behavior
@@ -18,7 +19,10 @@ while the HUD stays fixed: the 27-row NES maze is taller than the TMS9918's
 
 The prototype includes walls and tunnel wrapping, dots and energizers,
 10/50-point scoring, a frightened timer, flashing frightened ghosts, and
-200/400/800/1600-point ghost chains. A ghost hit costs a life and respawns the
+200/400/800/1600-point ghost chains. Eaten ghosts return as eyes to the
+house entrance. Fruit appears at the original pellet thresholds, with the
+round-dependent fruit and scores; it uses two extra sprite layers rather than
+erasing maze tiles. A ghost hit costs a life and respawns the
 actors without resetting the dots; losing the last life returns to the title.
 Clearing all 192 dots starts the next round with the maze restored. The HUD has
 NES-derived score labels and life icons, a working score/high score, a one-time
@@ -32,7 +36,7 @@ four sprites on one scanline: layering increases dropout, and ghost priority
 rotates to distribute the resulting flicker. Ghosts use NES-inspired scatter and
 chase targets, non-reversing ranked turns, frightened choices and per-round
 speed and frightened-time approximations. The long later-round chase phases,
-house releases and eaten-ghost return are still simplified. Title and
+house releases and return-to-house transitions are still simplified. Title and
 maze colors are approximations because each background tile row supports only
 two colors. Movement and audio are approximations, not exact NES behavior.
 
@@ -41,14 +45,15 @@ two colors. Movement and audio are approximations, not exact NES behavior.
 The SN76489 channels are assigned independently so a pellet chomp does not cut
 off the ghost warble or an event sound:
 
-* tone 0: alternating pellet chomp with a short volume decay;
-* tone 1: continuously sweeping ghost/frightened warble;
-* tone 2: ghost-eaten, death, and level-clear effects;
+* tones 0 and 1: two-voice READY melody, transcribed from the NES note streams;
+* tone 0: alternating pellet chomp with a short volume decay during play;
+* tone 1: continuously sweeping ghost/frightened warble during play;
+* tone 2: ghost-eaten, fruit, extra-life, death, and level-clear effects;
 * noise: currently muted.
 
-The three event effects share tone 2, so a newer event replaces an earlier event
-on that channel. The sounds are original SG-1000 approximations, not the NES
-APU streams or a note-for-note transcription.
+The event effects share tone 2, so a newer event replaces an earlier event
+on that channel. The READY melody uses the NES note durations and pitches with approximate PSG
+timbres. Other effects are SG-1000 approximations, not the original APU streams.
 
 The prototype has been exercised with a Z80 emulator and a minimal VDP/PSG
 model, not on real SG-1000 hardware or in a full system emulator.
@@ -83,6 +88,7 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m unittest discover -s tests/sg100
   camera, sprite and chomp.
 * `src/sg1000/ghosts.asm` implements simplified ghost movement, collisions,
   frightened sprites and sprite-priority rotation.
+* `src/sg1000/fruit.asm` manages the bonus fruit, scoring and sprite layers.
 * `src/sg1000/game.asm` manages lives, high score, game over and level reset;
   `src/sg1000/sound.asm` manages the siren and event-sound channels.
 * `src/sg1000/maze_viewer.asm` sets up the TMS9918 title, maze and HUD;
