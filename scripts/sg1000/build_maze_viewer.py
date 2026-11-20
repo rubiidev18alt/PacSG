@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 # Known ROMs are NROM-128 images. The USA release moves the maze pointer to
 # FFF6; its content is identical to the original Japan v1.0 stream.
 ROMS = {
-    'adb4d7d7d28c89ca177aad231e0fdad992c0fbfb': (11400, 'Japan v1.0'),
-    'e7d818e128593109b5c480497a050facc0744f1b': (11516, 'USA Namco'),
+    'adb4d7d7d28c89ca177aad231e0fdad992c0fbfb': (11400, 687, 933, 'Japan v1.0'),
+    'e7d818e128593109b5c480497a050facc0744f1b': (11516, 822, 1103, 'USA Namco'),
 }
 MAZE_SHA1 = '2076e1963bc3a0665cc0f831c459041fa88aea15'
 CHR_SHA1 = {
@@ -33,12 +33,17 @@ def assets_from_rom(data):
     digest = hashlib.sha1(data).hexdigest()
     if digest not in ROMS or len(data) != 24592:
         raise ValueError('ROM must be a verified Japan v1.0 or USA Namco image')
-    offset, revision = ROMS[digest]
+    offset, logo_offset, palette_offset, revision = ROMS[digest]
     maze = data[offset:offset + 416]
     chr_data = data[16400:24592]
     if hashlib.sha1(maze).hexdigest() != MAZE_SHA1 or hashlib.sha1(chr_data).hexdigest() not in CHR_SHA1:
         raise ValueError('ROM asset hashes do not match manifest')
-    return maze, chr_data, revision
+    logo = data[logo_offset:logo_offset + 138]
+    palette = data[palette_offset:palette_offset + 16]
+    if (hashlib.sha1(logo).hexdigest() != '42099a7bf62e02a54e70705d6823cc308900ecea'
+            or hashlib.sha1(palette).hexdigest() != 'ec25cd088056307b15869ede32e09480ed07142a'):
+        raise ValueError('ROM title asset hashes do not match manifest')
+    return maze, chr_data, logo, palette, revision
 
 
 def table(label, data):
@@ -48,7 +53,70 @@ def table(label, data):
     return '\n'.join(lines) + '\n'
 
 
-def build(maze, chr_data, output, assembler='pyz80'):
+# Title attribute bytes from sub_upload_title_attribute_table. These map each
+# 2x2-tile quadrant to an NES palette at the logo's original PPU coordinates.
+TITLE_ATTRIBUTES = bytes([
+    0x80, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0,
+    0, 0x66, 0x55, 0x55, 0x55, 0x55, 0xdd, 0,
+    8, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0,
+])
+# Closest TMS9918 colors to the four NES colors in this title palette.
+TITLE_NES_TO_TMS = {0x0f: 1, 0x20: 15, 0x06: 6, 0x26: 9, 0x27: 11}
+
+
+def title_assets(chr_data, logo, nes_palette):
+    """Build independent Graphics II banks for a 24-row NES-logo title.
+
+    Different NES palette attributes can apply to the same tile. Deduplicate
+    converted pattern/color pairs per 8-row TMS bank, not by NES tile ID.
+    """
+    if len(logo) != 138 or len(nes_palette) != 16:
+        raise ValueError('title requires the 138-byte logo and 16-byte palette')
+    try:
+        palettes = [[TITLE_NES_TO_TMS[c] for c in nes_palette[i:i + 4]]
+                    for i in range(0, 16, 4)]
+    except KeyError as exc:
+        raise ValueError(f'unsupported NES title color {exc.args[0]:02x}') from exc
+    # Blank is explicitly black: palette index 3 is not universally blank.
+    cells = [[None for _ in range(32)] for _ in range(24)]
+    for y in range(6):
+        for x in range(23):
+            ox, oy = x + 5, y + 7  # original NES logo location
+            attr = TITLE_ATTRIBUTES[(oy // 4 - 1) * 8 + ox // 4]
+            shift = ((oy // 2) % 2) * 4 + ((ox // 2) % 2) * 2
+            cells[y + 4][x + 5] = (logo[y * 23 + x], (attr >> shift) & 3)
+    for row, text in [(14, '1 PLAYER'), (17, 'PRESS BUTTON TO START')]:
+        start = (32 - len(text)) // 2
+        for x, character in enumerate(text):
+            if character != ' ':
+                cells[row][start + x] = (ord(character), 0)
+    banks_pattern, banks_color, names = bytearray(), bytearray(), bytearray()
+    for bank in range(3):
+        patterns = bytearray(2048)
+        colors = bytearray([0x11] * 2048)
+        unique = {(bytes(8), bytes([0x11] * 8)): 0}
+        for row in cells[bank * 8:bank * 8 + 8]:
+            for cell in row:
+                if cell is None:
+                    names.append(0)
+                    continue
+                tile, pal = cell
+                p, c, _ = convert(chr_data[tile * 16:(tile + 1) * 16], palettes[pal], True)
+                key = (p, c)
+                if key not in unique:
+                    index = len(unique)
+                    if index >= 256:
+                        raise ValueError('title graphics exceed a TMS pattern bank')
+                    unique[key] = index
+                    patterns[index * 8:(index + 1) * 8] = p
+                    colors[index * 8:(index + 1) * 8] = c
+                names.append(unique[key])
+        banks_pattern.extend(patterns)
+        banks_color.extend(colors)
+    return bytes(banks_pattern), bytes(banks_color), bytes(names)
+
+
+def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
     _, used = decode(maze)
     if used != len(maze):
         raise ValueError('maze stream has trailing bytes')
@@ -64,13 +132,28 @@ def build(maze, chr_data, output, assembler='pyz80'):
     patterns, colors = bytearray(patterns), bytearray(colors)
     patterns[0x2d * 8:0x2e * 8] = bytes(8)
     colors[0x2d * 8:0x2e * 8] = bytes([0x11] * 8)  # TMS color 1 = black
+    # NES maze edge/tunnel tiles use the same index for black fills that the
+    # global preview palette maps to white. Keep their blue outlines and map
+    # the fill to black. HUD glyphs use a separate white-on-black mapping.
+    for tile in (0x04, 0x05, 0x06, 0x21, 0x22):
+        for row in range(tile * 8, tile * 8 + 8):
+            fg, bg = colors[row] >> 4, colors[row] & 15
+            colors[row] = ((1 if fg == 15 else fg) << 4) | (1 if bg == 15 else bg)
+    for tile in range(0x30, 0x5b):
+        for row in range(tile * 8, tile * 8 + 8):
+            fg, bg = colors[row] >> 4, colors[row] & 15
+            colors[row] = ((15 if fg == 4 else fg) << 4) | (15 if bg == 4 else bg)
+    title_patterns, title_colors, title_names = title_assets(chr_data, logo, title_palette)
     with tempfile.TemporaryDirectory() as tmp:
         asm = Path(tmp) / 'viewer.asm'
         binary = Path(tmp) / 'viewer.bin'
         asm.write_text((ROOT / 'src/sg1000/maze_viewer.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/maze.asm').read_text() + '\n' +
                        table('maze_data', maze) + table('pattern_data', patterns) +
-                       table('color_data', colors))
+                       table('color_data', colors) +
+                       table('title_pattern_data', title_patterns) +
+                       table('title_color_data', title_colors) +
+                       table('title_name_data', title_names))
         subprocess.run([assembler, '--obj=' + str(binary), str(asm)], check=True)
         rom = binary.read_bytes()
     if len(rom) > 49152:
@@ -85,23 +168,30 @@ def main():
     parser.add_argument('--rom', type=Path, help='verified Japan v1.0 or USA Namco NES ROM')
     parser.add_argument('--maze', type=Path, default=ROOT / 'assets/generated/maze/maze.rle')
     parser.add_argument('--chr', type=Path, default=ROOT / 'assets/generated/chr/pacman.chr')
+    parser.add_argument('--logo', type=Path, default=ROOT / 'assets/generated/title/logo-tiles.bin')
+    parser.add_argument('--title-palette', type=Path, default=ROOT / 'assets/generated/palettes/title-background.bin')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/sg1000/maze-viewer.sg')
     parser.add_argument('--assembler', default='pyz80')
     args = parser.parse_args()
     try:
         if args.rom:
-            maze, chr_data, revision = assets_from_rom(args.rom.read_bytes())
+            maze, chr_data, logo, title_palette, revision = assets_from_rom(args.rom.read_bytes())
             print(f'Using {revision} assets.')
         else:
             maze = args.maze.read_bytes()
             chr_data = args.chr.read_bytes()
+            logo = args.logo.read_bytes()
+            title_palette = args.title_palette.read_bytes()
+            if (hashlib.sha1(logo).hexdigest() != '42099a7bf62e02a54e70705d6823cc308900ecea'
+                    or hashlib.sha1(title_palette).hexdigest() != 'ec25cd088056307b15869ede32e09480ed07142a'):
+                raise ValueError('title assets do not match the verified ROM')
             if hashlib.sha1(maze).hexdigest() != MAZE_SHA1:
                 raise ValueError('maze asset does not match the verified maze')
             if hashlib.sha1(chr_data).hexdigest() not in CHR_SHA1:
                 raise ValueError('CHR asset does not match Japan v1.0 or USA Namco')
         if not shutil.which(args.assembler):
             raise ValueError('pyz80 assembler not found; install scripts/sg1000/requirements-test.txt')
-        reduced = build(maze, chr_data, args.output, args.assembler)
+        reduced = build(maze, chr_data, args.output, args.assembler, logo=logo, title_palette=title_palette)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         parser.error(str(exc))
     print(f'Built diagnostic {args.output} (49152 bytes; {reduced} reduced color rows).')

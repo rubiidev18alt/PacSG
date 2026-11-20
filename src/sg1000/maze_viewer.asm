@@ -1,6 +1,6 @@
 ; SG-1000 maze/CHR diagnostics, not a game. Assembled with maze.asm and
-; generated data tables by build_maze_viewer.py. Display a 24-row window onto
-; the original 27-row NES tile map; joystick up/down scroll the window.
+; generated data tables by build_maze_viewer.py. Fire starts the maze viewer;
+; joystick up/down scrolls its 24-row window over the 27-row NES tile map.
 ;
 ; TMS9918A Graphics II: pattern 0000, names 1800, sprites 1B00, colors 2000.
 ; 1 KiB SG-1000 RAM at C000-C3FF: map C000-C251, state C260, stack at C400.
@@ -27,6 +27,42 @@ setup_register_loop:
     inc hl
     inc c
     djnz setup_register_loop
+
+    ; Hide sprites and display the title using its own Graphics II banks.
+    ld de,6912
+    call set_vram_write
+    ld a,208
+    out (190),a
+    ld de,0
+    call set_vram_write
+    ld hl,title_pattern_data
+    ld bc,6144
+    call write_vram_block
+    ld de,8192
+    call set_vram_write
+    ld hl,title_color_data
+    ld bc,6144
+    call write_vram_block
+    ld de,6144
+    call set_vram_write
+    ld hl,title_name_data
+    ld bc,768
+    call write_vram_block
+    call display_on
+
+wait_start:
+    in a,(191)
+    and 128
+    jr z,wait_start
+    in a,(220)
+    and 48                      ; either fire button, active low
+    cp 48
+    jr z,wait_start
+    ; Switch to the maze tiles while display is off.
+    ld a,128
+    out (191),a
+    ld a,129
+    out (191),a
 
     ; Three Graphics II 256-pattern banks all use the same NES tile set.
     ld de,0
@@ -77,6 +113,7 @@ clear_names_loop:
     ld a,208
     out (190),a
     call draw_maze
+    call draw_hud
     call display_on
 
 frame_loop:
@@ -149,7 +186,7 @@ write_vram_block:
     jr nz,write_vram_block
     ret
 
-; Draw 24 of the 27 decoded 22-tile rows, centered in a 32-column display.
+; Draw 24 of the 27 decoded 22-tile rows on the left; HUD occupies columns 22..31.
 draw_maze:
     ld ix,49152
     ld a,(49760)
@@ -161,7 +198,7 @@ maze_window_skip:
     dec a
     jr nz,maze_window_skip
 maze_window_ready:
-    ld de,6149                 ; name table + five columns
+    ld de,6144                 ; name table, left edge
     ld b,24
 maze_screen_row:
     push bc
@@ -181,6 +218,48 @@ maze_screen_tile:
     pop bc
     djnz maze_screen_row
     ret
+
+; Static mock HUD: gameplay, scoring, lives and rounds do not exist yet.
+; Ten columns starting at x=22, untouched by maze redraw/scrolling.
+draw_hud:
+    ld de,6230                  ; row 2, column 22
+    call set_vram_write
+    ld hl,hud_1up
+    ld bc,10
+    call write_vram_block
+    ld de,6262                  ; row 3
+    call set_vram_write
+    ld hl,hud_zero
+    ld bc,10
+    call write_vram_block
+    ld de,6358                  ; row 6
+    call set_vram_write
+    ld hl,hud_high
+    ld bc,10
+    call write_vram_block
+    ld de,6390                  ; row 7
+    call set_vram_write
+    ld hl,hud_zero
+    ld bc,10
+    call write_vram_block
+    ld de,6742                  ; row 18
+    call set_vram_write
+    ld hl,hud_lives
+    ld bc,10
+    call write_vram_block
+    ld de,6806                  ; row 20
+    call set_vram_write
+    ld hl,hud_round
+    ld bc,10
+    call write_vram_block
+    ret
+
+; Each row is 10 tile IDs; 32 is NES space.
+hud_1up:   defb 49,85,80,32,32,32,32,32,32,32
+hud_zero:  defb 48,48,32,32,32,32,32,32,32,32
+hud_high:  defb 72,73,71,72,32,83,67,79,82,69
+hud_lives: defb 76,73,86,69,83,32,51,32,32,32
+hud_round: defb 82,79,85,78,68,32,49,32,32,32
 
 vdp_registers:
     defb 2,128,6,255,3,54,7,1

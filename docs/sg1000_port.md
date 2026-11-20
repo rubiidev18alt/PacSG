@@ -20,8 +20,10 @@ that displays the original maze can be built, but it is not Pac-Man. The NES sou
   tile bank placement and sprite conversion must be handled separately.
 * `src/sg1000/maze_viewer.asm` and `scripts/sg1000/build_maze_viewer.py`
   build a 48 KiB SG-1000 diagnostic ROM. It displays a 24-row window of the
-  NES maze and scrolls with joystick 1 up/down. The fixed color mapping is
-  approximate and can lose colors; there are no actors or gameplay. The ROM
+  NES logo and a start prompt, then a 24-row window of the NES maze on the
+  left with a static mock HUD on the right. Press either fire button to leave
+  the title and joystick 1 up/down to scroll. Colors are approximate and can
+  lose detail; there are no actors, gameplay or working HUD values. The ROM
   has been boot-tested in a Z80 emulator with a minimal VDP model, not on real
   hardware or in a full SG-1000 emulator.
 * `scripts/sg1000/decode_maze.py`, which decodes the original compressed 27 by
@@ -64,6 +66,6 @@ make sg1000-maze-viewer
 
 This writes `build/sg1000/maze-viewer.sg`, a raw 49,152-byte ROM, padded with
 `FF`. It verifies the input ROM and maze/CHR hashes. The USA Namco release uses its
-regional CHR with the same maze. It is a maze viewer,
-**not a playable port**. Its tile colors are a lossy approximation; the NES
+regional CHR with the same maze. It is a title-and-maze viewer, **not a playable port**. The on-screen
+score, lives and round are static placeholders. Its tile colors are a lossy approximation; the NES
 uses palette attributes that are not represented in this diagnostic.
