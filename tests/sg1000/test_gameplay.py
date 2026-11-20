@@ -43,10 +43,12 @@ class GameplayTests(unittest.TestCase):
             tile = names[row * 32 + column]
             offset = (row // 8) * 2048 + tile * 8
             return patterns[offset:offset + 8], colors[offset:offset + 8]
-        for row, text in ((19, 'UNOFFICIAL FAN PORT,'), (20, 'NOT LICENSED BY')):
+        for row, text in ((11, '1985'), (18, 'UNLICENSED BY NINTENDO NOR SEGA'),
+                          (19, 'UNOFFICIAL FAN PORT,'), (20, 'NOT LICENSED BY')):
             left = (32 - len(text)) // 2
             for x, character in enumerate(text):
                 if character == ' ':
+                    self.assertEqual(names[row * 32 + left + x], 0)
                     continue
                 if character == ',':
                     self.assertEqual(cell(row, left + x)[0], bytes([0, 0, 0, 0, 0, 24, 24, 16]))

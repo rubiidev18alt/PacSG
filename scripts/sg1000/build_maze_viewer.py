@@ -86,7 +86,9 @@ def title_assets(chr_data, logo, nes_palette):
             attr = TITLE_ATTRIBUTES[(oy // 4 - 1) * 8 + ox // 4]
             shift = ((oy // 2) % 2) * 4 + ((ox // 2) % 2) * 2
             cells[y + 4][x + 5] = (logo[y * 23 + x], (attr >> shift) & 3)
-    for row, text in [(14, '1 PLAYER'), (16, 'PRESS BUTTON TO START'),
+    for row, text in [(11, '1985'), (14, '1 PLAYER'),
+                      (16, 'PRESS BUTTON TO START'),
+                      (18, 'UNLICENSED BY NINTENDO NOR SEGA'),
                       (19, 'UNOFFICIAL FAN PORT,'), (20, 'NOT LICENSED BY')]:
         start = (32 - len(text)) // 2
         for x, character in enumerate(text):
