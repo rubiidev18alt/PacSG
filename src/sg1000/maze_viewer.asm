@@ -311,7 +311,7 @@ draw_hud:
     ld hl,hud_1up
     ld bc,10
     call write_vram_block
-    ld de,6806                  ; row 20: round number
+    ld de,6646                  ; row 15: round number
     call set_vram_write
     ld hl,hud_round
     ld bc,10

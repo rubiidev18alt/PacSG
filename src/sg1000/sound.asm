@@ -13,8 +13,8 @@ sound_frame:
     ld a,(49939)
     cp 2
     jr z,sound_event_tick     ; silence siren during death animation
-    ; Panic takes priority while frightened; otherwise returning eyes and
-    ; three pellet-count bands use the same PSG tone 1.
+    ; Returning eyes take priority over panic and the three siren bands.
+    ; Each note sequence uses PSG tone 1.
     call sound_siren_tick
 sound_event_tick:
     ; Start/restart an event when its kind changes or its frame counter is
@@ -86,9 +86,6 @@ sound_event_tick:
     jp sound_ready_voice
 
 sound_siren_tick:
-    ld a,(49791)
-    or a
-    jr nz,sound_siren_frightened
     ld hl,49814               ; ghost record state byte
     ld de,8
     ld b,4
@@ -100,6 +97,9 @@ sound_siren_tick:
     jr z,sound_siren_eyes
     add hl,de
     djnz sound_siren_scan_eyes
+    ld a,(49791)
+    or a
+    jr nz,sound_siren_frightened
     ld a,(49788)
     cp 136
     jr nc,sound_siren_high
@@ -287,12 +287,11 @@ sound_popup_frame:
     jp sound_event_tick
 
 sound_unfreeze:
-    ; Restart the frightened sound now, including when eyes are returning.
-    ; Forcing a fresh note also unmutes channel 1 if it was already playing
-    ; panic when the freeze began.
+    ; The captured ghost is now returning eyes. Start the NES eye-wailing
+    ; stream immediately; it retains priority while any ghost returns.
     ld a,255
     ld (49926),a
-    call sound_siren_frightened
+    call sound_siren_eyes
     ; Tone 0's frequency and sequencer were held throughout the pause.
     ld a,(49951)
     out (127),a

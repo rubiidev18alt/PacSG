@@ -23,8 +23,9 @@ The prototype includes walls and tunnel wrapping, dots and energizers,
 200/400/800/1600-point ghost chains. Eating a ghost briefly freezes the action,
 shows its NES-derived point sprite, and then sends it home as eyes. During the
 pause all actors, animations, and gameplay timers are frozen. Only the ghost-eaten
-sound plays; the frightened-ghost sound restarts and pellet audio resumes when
-the pause ends. This
+sound plays; the returning-eyes wail starts and pellet audio resumes when
+the pause ends. While eyes are returning, their wail takes priority over the
+frightened-ghost sound. This
 intentionally differs from the NES, where previously returning eyes keep moving. Fruit appears at the original pellet thresholds, with the
 round-dependent fruit and scores; it uses two extra sprite layers rather than
 erasing maze tiles. READY!, PLAYER and ONE use the NES sprite glyphs, drawn as
@@ -35,9 +36,10 @@ original CHR/OAM frames before deducting a life. The actors then respawn without
 resetting dots; losing the last life shows GAME OVER and returns to the title.
 Clearing all 192 dots starts the next round with the maze restored. The HUD has
 NES-derived score labels and life icons, a working score/high score, a one-time
-extra life at 10,000, a numeric round indicator, and a seven-icon stage fruit
-history. The fruit history uses background tiles in the right HUD (four icons
-above three) to avoid the hardware sprite limit. The high score is retained
+extra life at 10,000, a numeric round indicator, and an eight-icon stage fruit
+history at the NES HUD position, four icons per row. Background tiles avoid the
+hardware sprite limit; the spare lives sit below the fruit and the round number
+sits above it. The high score is retained
 across game overs while the machine stays powered on.
 
 Pac-Man's and the ghosts' 16x16 masks are composed from the original NES CHR

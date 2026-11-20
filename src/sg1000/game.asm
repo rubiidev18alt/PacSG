@@ -360,7 +360,7 @@ game_draw_lives:
     ld a,4
  game_life_count_capped:
     ld (49855),a
-    ld de,6742                ; row 18, column 22
+    ld de,6870                ; row 22, column 22
     call set_vram_write
     ld a,(49855)
     ld c,a
@@ -381,7 +381,7 @@ game_draw_lives:
     out (190),a
  game_lives_top_next:
     djnz game_lives_top
-    ld de,6774                ; row 19
+    ld de,6902                ; row 23
     call set_vram_write
     ld a,(49855)
     ld c,a
@@ -405,7 +405,7 @@ game_draw_lives:
     ret
 
 game_draw_round:
-    ld de,6812                ; row 20, column 28
+    ld de,6652                ; row 15, column 28
     call set_vram_write
     ld a,(49789)
     ld b,0

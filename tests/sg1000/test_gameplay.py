@@ -201,8 +201,8 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(vdp.ram[6914], 228)
         psg_before_resume = len(vdp.psg)
         advance(cpu, vdp, 1)
-        self.assertIn(185, vdp.psg[psg_before_resume:])  # panic restarts
-        self.assertEqual(cpu.memory[0xc306], 1)  # even with eyes present
+        self.assertIn(185, vdp.psg[psg_before_resume:])  # returning-eyes wail starts
+        self.assertEqual(cpu.memory[0xc306], 0)  # returning-eyes stream
         self.assertEqual(cpu.memory[0xc31a], 0)
         self.assertEqual(cpu.memory[0xc296], 1)
         self.assertNotEqual(vdp.ram[6914], 228)  # Pac-Man reappears
@@ -212,7 +212,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
         advance(cpu, vdp, 1)
         self.assertNotEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)
-        self.assertEqual(cpu.memory[0xc306], 1)  # panic continues after resume
+        self.assertEqual(cpu.memory[0xc306], 0)  # wail continues after resume
         # A second ghost awards 400 and uses the NES's 38-frame repeat pause.
         cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 20, 28, 1
         cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
@@ -220,7 +220,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc31a], 38)
         self.assertEqual(vdp.ram[6914], 232)
 
-    def test_popup_plays_only_ghost_eaten_and_resumes_panic_and_chomp(self):
+    def test_popup_plays_only_ghost_eaten_and_resumes_wail_and_chomp(self):
         cpu, vdp = self.new_game()
         # Put an unrelated effect and a pellet sound on their channels.
         cpu.memory[0xc282], cpu.memory[0xc283] = 60, 5
@@ -255,12 +255,21 @@ class GameplayTests(unittest.TestCase):
         resume = len(vdp.psg)
         advance(cpu, vdp, 1)
         self.assertIn(185, vdp.psg[resume:])
-        self.assertEqual(cpu.memory[0xc306], 1)
+        self.assertEqual(cpu.memory[0xc306], 0)
+        eyes_note = psg_events(STREAMS['sfx_eyes'])
+        self.assertEqual(vdp.psg[resume:resume + 3],
+                         [0xa0 | eyes_note[1], eyes_note[2], 185])
         self.assertEqual(vdp.psg[-1], saved_volume)
         self.assertEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
         self.assertEqual(cpu.memory[0xc282], 0)
         advance(cpu, vdp, 1)
         self.assertNotEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
+        self.assertEqual(cpu.memory[0xc306], 0)  # wail keeps priority
+        # Once no eyes remain, the frightened sound resumes normally.
+        for ghost in range(4):
+            cpu.memory[0xc296 + ghost * 8] = 0
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc306], 1)
 
     def test_score_popup_scroll_and_tunnel_early_clock(self):
         cpu, vdp = self.new_game()
@@ -524,14 +533,14 @@ class GameplayTests(unittest.TestCase):
     def test_hud_fruit_history_tracks_rounds_and_ignores_scrolling(self):
         cpu, vdp = self.new_game()
         patterns, colors = fruit_hud_tiles(self.chr_data)
-        # Both color and pattern tiles are in the middle Graphics II bank.
-        self.assertEqual(vdp.ram[2048 + 0xc0 * 8:2048 + 0xe0 * 8], patterns)
-        self.assertEqual(vdp.ram[8192 + 2048 + 0xc0 * 8:8192 + 2048 + 0xe0 * 8], colors)
-        addresses = (6550, 6552, 6554, 6556, 6614, 6616, 6618)
+        # The HUD's rows 18-21 use the third Graphics II bank.
+        self.assertEqual(vdp.ram[4096 + 0xc0 * 8:4096 + 0xe0 * 8], patterns)
+        self.assertEqual(vdp.ram[8192 + 4096 + 0xc0 * 8:8192 + 4096 + 0xe0 * 8], colors)
+        addresses = (6742, 6744, 6746, 6748, 6806, 6808, 6810, 6812)
         groups = (0, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7)
 
         def assert_history(level):
-            first = max(0, level - 7)
+            first = max(0, level - 8)
             for slot, address in enumerate(addresses):
                 if slot >= level:
                     self.assertEqual(vdp.ram[address:address + 2], bytes([45, 45]))
@@ -543,7 +552,10 @@ class GameplayTests(unittest.TestCase):
                 self.assertEqual(vdp.ram[address + 32:address + 34], bytes([tile + 2, tile + 3]))
 
         assert_history(1)
-        for level in (2, 7, 8, 13, 19, 99):
+        self.assertEqual(vdp.ram[6870:6878], bytes([60, 61, 60, 61, 32, 32, 32, 32]))
+        self.assertEqual(vdp.ram[6646:6651], b'ROUND')
+        self.assertEqual(vdp.ram[6652:6654], b' 1')
+        for level in (2, 7, 8, 9, 13, 19, 99):
             cpu.memory[0xc27d] = level - 1
             cpu.memory[0xc281] = 0
             cpu.memory[0xc2b6] = 1
@@ -557,7 +569,7 @@ class GameplayTests(unittest.TestCase):
         cpu.memory[0xc260], cpu.memory[0xc261] = 3, 0
         advance(cpu, vdp, 20, ghosts_disabled=True)
         self.assertEqual(cpu.memory[0xc260], 0)
-        for row in range(12, 16):
+        for row in range(18, 22):
             self.assertEqual(vdp.ram[6144 + row * 32 + 22:6144 + row * 32 + 30],
                              before[6144 + row * 32 + 22 - 6144:6144 + row * 32 + 30 - 6144])
         assert_history(99)
@@ -644,7 +656,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(vdp.ram[6518:6528], b'READY     ')
         self.assertGreater(cpu.memory[0xc281], 0)
         self.assertEqual(cpu.memory[0xc000 + 5 * 22 + 2], 7)
-        self.assertEqual(vdp.ram[6742:6750], bytes([60, 61, 32, 32, 32, 32, 32, 32]))
+        self.assertEqual(vdp.ram[6870:6878], bytes([60, 61, 32, 32, 32, 32, 32, 32]))
         advance(cpu, vdp, 192, ghosts_disabled=True)
         # Simulate another hit on the last life and a previously earned high.
         high = bytes([1, 2, 3, 4, 5, 6])
@@ -677,7 +689,7 @@ class GameplayTests(unittest.TestCase):
         advance(cpu, vdp, 1, ghosts_disabled=True)
         self.assertEqual(cpu.memory[0xc27e], 4)
         self.assertEqual(cpu.memory[0xc28b], 1)
-        self.assertEqual(vdp.ram[6742:6750], bytes([60, 61, 60, 61, 60, 61, 32, 32]))
+        self.assertEqual(vdp.ram[6870:6878], bytes([60, 61, 60, 61, 60, 61, 32, 32]))
         self.assertEqual(vdp.ram[6390:6397], b'  10000')
         cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 28, 12, 1
         cpu.memory[0xc261] = 0
@@ -696,7 +708,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc000 + 22 + 2], 3)
         self.assertEqual(cpu.memory[0xc27e], 3)
         self.assertEqual(vdp.ram[6390:6397], b'     10')
-        self.assertEqual(vdp.ram[6812:6814], b' 2')
+        self.assertEqual(vdp.ram[6652:6654], b' 2')
         self.assertGreater(cpu.memory[0xc281], 0)
         self.assertEqual(cpu.memory[0xc283], 3)  # level-clear sound
         self.assertEqual(vdp.ram[6518:6528], b'CLEAR     ')
