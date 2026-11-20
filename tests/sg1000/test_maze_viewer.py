@@ -77,7 +77,8 @@ class ViewerTests(unittest.TestCase):
                      for token in ([192 + row] * 5 + [64 + row]))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'test.sg'
-            build(maze, bytes(8192), path)
+            # Nonzero CHR makes the blank-tile override observable.
+            build(maze, bytes([255]) * 8192, path)
             rom = path.read_bytes()
         self.assertEqual(len(rom), 49152)
         cpu, vdp = z80.Z80Machine(), VDP()
@@ -89,6 +90,14 @@ class ViewerTests(unittest.TestCase):
             cpu.run()
         self.assertEqual(vdp.registers, [2, 192, 6, 255, 3, 54, 7, 1])
         self.assertEqual(vdp.ram[6912], 208)
+        # The margin/maze blank tile must render black in all three banks,
+        # regardless of the NES CHR pixels or the generic palette mapping.
+        for bank in range(3):
+            offset = bank * 2048 + 0x2d * 8
+            self.assertEqual(vdp.ram[offset:offset + 8], bytes(8))
+            self.assertEqual(vdp.ram[8192 + offset:8192 + offset + 8], bytes([0x11] * 8))
+        self.assertEqual(vdp.registers[7] & 15, 1)  # black VDP backdrop
+        self.assertEqual(vdp.ram[6144], 0x2d)       # left margin
         for row in range(24):
             self.assertEqual(vdp.ram[6144 + row * 32 + 5:6144 + row * 32 + 27],
                              bytes([row]) * 22)

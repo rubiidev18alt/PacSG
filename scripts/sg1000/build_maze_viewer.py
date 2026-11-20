@@ -57,6 +57,13 @@ def build(maze, chr_data, output, assembler='pyz80'):
     # Graphics II supports two colors per row. This fixed palette is a rough
     # preview only: NES palettes are selected per attribute block, not per tile.
     patterns, colors, reduced = convert(chr_data[:4096], [1, 4, 15, 15], True)
+    # In the NES maze, tile $2D is used as the blank surrounding tile. Its
+    # CHR pixels are all palette index 3, which becomes black through the
+    # original NES attribute palette. The fixed preview mapping makes those
+    # pixels white, so give this particular tile an explicit black definition.
+    patterns, colors = bytearray(patterns), bytearray(colors)
+    patterns[0x2d * 8:0x2e * 8] = bytes(8)
+    colors[0x2d * 8:0x2e * 8] = bytes([0x11] * 8)  # TMS color 1 = black
     with tempfile.TemporaryDirectory() as tmp:
         asm = Path(tmp) / 'viewer.asm'
         binary = Path(tmp) / 'viewer.bin'
