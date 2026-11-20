@@ -146,3 +146,8 @@ help:
 	$(info   make play [MOVIE=name]      watch a movie in MAME; ROM=image for another build)
 	$(info   make studio-check / profile-check / lint / format / hooks / clean)
 	@exit 0
+
+# SG-1000 development diagnostic only; this is not a playable game port.
+.PHONY: sg1000-maze-viewer
+sg1000-maze-viewer:
+	$(PYTHON) scripts/sg1000/build_maze_viewer.py
