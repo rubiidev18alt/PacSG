@@ -1,6 +1,6 @@
-; SG-1000 maze/CHR diagnostics, not a game. Assembled with maze.asm and
-; generated data tables by build_maze_viewer.py. Fire starts the maze viewer;
-; joystick up/down scrolls its 24-row window over the 27-row NES tile map.
+; SG-1000 Pac-Man movement/pellet prototype. Assembled with maze.asm, player.asm,
+; score.asm and ROM-derived graphics by build_maze_viewer.py. Fire starts;
+; joystick controls Pac-Man. The viewport follows him vertically.
 ;
 ; TMS9918A Graphics II: pattern 0000, names 1800, sprites 1B00, colors 2000.
 ; 1 KiB SG-1000 RAM at C000-C3FF: map C000-C251, state C260, stack at C400.
@@ -96,6 +96,14 @@ color_bank_loop:
     pop bc
     djnz color_bank_loop
 
+    ; Load pre-flipped 16x16 Pac-Man sprite frames into the TMS sprite table.
+    ld de,14336
+    call set_vram_write
+    ld hl,pacman_sprite_data
+    ld bc,288
+    call write_vram_block
+    call player_init
+
     ; Clear the name table, including the horizontal margins.
     ld de,6144
     call set_vram_write
@@ -114,6 +122,8 @@ clear_names_loop:
     out (190),a
     call draw_maze
     call draw_hud
+    call player_draw_score
+    call player_draw_sprite
     call display_on
 
 frame_loop:
@@ -122,45 +132,11 @@ wait_vblank:
     in a,(191)
     and 128
     jr z,wait_vblank
-    ld a,(49761)
-    or a
-    jr z,read_pad
-    dec a
-    ld (49761),a
-    jr frame_loop
-read_pad:
-    in a,(220)                 ; joystick 1, active low
-    bit 0,a
-    jr z,scroll_up
-    bit 1,a
-    jr z,scroll_down
-    jr frame_loop
-scroll_up:
-    ld a,(49760)
-    or a
-    jr z,frame_loop
-    dec a
-    jr change_scroll
-scroll_down:
-    ld a,(49760)
-    cp 3
-    jr z,frame_loop
-    inc a
-change_scroll:
-    ld (49760),a
-    ld a,8
-    ld (49761),a
-    ; Avoid displaying a partially rewritten name table.
-    ld a,128
-    out (191),a
-    ld a,129
-    out (191),a
-    call draw_maze
-    call display_on
-    jr frame_loop
+    call player_frame
+    jp frame_loop
 
 display_on:
-    ld a,192
+    ld a,194
     out (191),a
     ld a,129
     out (191),a
@@ -219,7 +195,7 @@ maze_screen_tile:
     djnz maze_screen_row
     ret
 
-; Static mock HUD: gameplay, scoring, lives and rounds do not exist yet.
+; HUD: score is updated separately; high score, lives and round are placeholders.
 ; Ten columns starting at x=22, untouched by maze redraw/scrolling.
 draw_hud:
     ld de,6230                  ; row 2, column 22

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build a 48 KiB SG-1000 ROM for inspecting the extracted NES maze.
+"""Build the 48 KiB SG-1000 Pac-Man movement prototype.
 
-This diagnostic is not a Pac-Man port. It deliberately requires the user's
+This prototype is not a complete Pac-Man port. It deliberately requires the user's
 own NES ROM or extracted assets and does not redistribute ROM data.
 """
 import argparse
@@ -116,6 +116,43 @@ def title_assets(chr_data, logo, nes_palette):
     return bytes(banks_pattern), bytes(banks_color), bytes(names)
 
 
+# NES sprite composition frames 01..09 from tbl_actor_sprite_tiles and
+# tbl_actor_sprite_attrs: closed, then two frames per NES direction
+# (up, left, down, right). Each quad is 8x8, in NES OAM order TL,TR,BL,BR.
+PACMAN_FRAMES = (
+    ((0, 0, 0, 0), (0x00, 0x40, 0x80, 0xc0)),
+    ((4, 4, 3, 3), (0x80, 0xc0, 0x80, 0xc0)),
+    ((8, 8, 7, 7), (0x80, 0xc0, 0x80, 0xc0)),
+    ((2, 1, 2, 1), (0x00, 0x00, 0x80, 0x80)),
+    ((6, 5, 6, 5), (0x00, 0x00, 0x80, 0x80)),
+    ((3, 3, 4, 4), (0x00, 0x40, 0x00, 0x40)),
+    ((7, 7, 8, 8), (0x00, 0x40, 0x00, 0x40)),
+    ((1, 2, 1, 2), (0x40, 0x40, 0xc0, 0xc0)),
+    ((5, 6, 5, 6), (0x40, 0x40, 0xc0, 0xc0)),
+)
+
+
+def pacman_sprite_patterns(chr_data):
+    """Rebuild NES Pac-Man's 16x16 frames as 1-bit TMS sprite masks."""
+    if len(chr_data) != 8192:
+        raise ValueError('expected 8192 bytes of NES CHR data')
+    result = bytearray()
+    for tiles, attrs in PACMAN_FRAMES:
+        quads = []
+        for tile, attr in zip(tiles, attrs):
+            data = chr_data[4096 + tile * 16:4096 + (tile + 1) * 16]
+            rows = [data[y] | data[y + 8] for y in range(8)]
+            if attr & 0x80:
+                rows.reverse()
+            if attr & 0x40:
+                rows = [int(f'{value:08b}'[::-1], 2) for value in rows]
+            quads.append(bytes(rows))
+        # TMS9918 16x16 sprite pattern order is TL, BL, TR, BR.
+        for index in (0, 2, 1, 3):
+            result.extend(quads[index])
+    return bytes(result)
+
+
 def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
     _, used = decode(maze)
     if used != len(maze):
@@ -149,11 +186,14 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
         binary = Path(tmp) / 'viewer.bin'
         asm.write_text((ROOT / 'src/sg1000/maze_viewer.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/maze.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/player.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/score.asm').read_text() + '\n' +
                        table('maze_data', maze) + table('pattern_data', patterns) +
                        table('color_data', colors) +
                        table('title_pattern_data', title_patterns) +
                        table('title_color_data', title_colors) +
-                       table('title_name_data', title_names))
+                       table('title_name_data', title_names) +
+                       table('pacman_sprite_data', pacman_sprite_patterns(chr_data)))
         subprocess.run([assembler, '--obj=' + str(binary), str(asm)], check=True)
         rom = binary.read_bytes()
     if len(rom) > 49152:
@@ -194,7 +234,7 @@ def main():
         reduced = build(maze, chr_data, args.output, args.assembler, logo=logo, title_palette=title_palette)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         parser.error(str(exc))
-    print(f'Built diagnostic {args.output} (49152 bytes; {reduced} reduced color rows).')
+    print(f'Built prototype {args.output} (49152 bytes; {reduced} reduced color rows).')
 
 
 if __name__ == '__main__':

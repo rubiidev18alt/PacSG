@@ -1,14 +1,13 @@
-"""Boot the diagnostic ROM in a Z80 emulator with a minimal TMS9918 model."""
-import importlib.util
+"""Boot the cartridge and exercise Pac-Man on a Z80 with a minimal VDP/PSG."""
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 import z80
 
 ROOT = Path(__file__).resolve().parents[2]
-import sys
 sys.path.insert(0, str(ROOT / 'scripts/sg1000'))
-from build_maze_viewer import assets_from_rom, build, title_assets
+from build_maze_viewer import assets_from_rom, build, pacman_sprite_patterns, title_assets
 from decode_maze import decode
 
 
@@ -19,6 +18,8 @@ class VDP:
         self.latch = None
         self.address = 0
         self.pad = 255
+        self.vblank = False
+        self.psg = []
 
     def output(self, port, value):
         if port & 255 == 191:
@@ -33,12 +34,31 @@ class VDP:
         elif port & 255 == 190:
             self.ram[self.address] = value
             self.address = (self.address + 1) & 16383
+        elif port & 255 == 127:
+            self.psg.append(value)
 
     def input(self, port):
         if port & 255 == 191:
             self.latch = None
-            return 128
+            value = 128 if self.vblank else 0
+            self.vblank = False
+            return value
         return self.pad
+
+
+def advance(cpu, vdp, frames):
+    for _ in range(frames):
+        vdp.vblank = True
+        cpu.ticks_to_stop = 1000000
+        cpu.run()
+
+
+def make_machine(rom):
+    cpu, vdp = z80.Z80Machine(), VDP()
+    cpu.set_memory_block(0, rom)
+    cpu.set_input_callback(vdp.input)
+    cpu.set_output_callback(vdp.output)
+    return cpu, vdp
 
 
 class ViewerTests(unittest.TestCase):
@@ -46,7 +66,53 @@ class ViewerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'verified'):
             assets_from_rom(bytes(24592))
 
-    def test_uploaded_rom_boots_with_real_maze(self):
+    def test_sprite_quads_and_flips(self):
+        # Construct unique top/bottom rows in each NES tile: verifying that
+        # conversion honors horizontal and vertical NES OAM flips and the TMS
+        # TL, BL, TR, BR sprite-pattern layout.
+        chr_data = bytearray(8192)
+        for tile in range(9):
+            for y in range(8):
+                chr_data[4096 + tile * 16 + y] = (tile * 17 + y) & 255
+        data = pacman_sprite_patterns(chr_data)
+        self.assertEqual(len(data), 9 * 32)
+        first = [chr_data[4096 + y] for y in range(8)]
+        flip = lambda x: int(f'{x:08b}'[::-1], 2)
+        self.assertEqual(data[:8], bytes(first))
+        self.assertEqual(data[8:16], bytes(reversed(first)))
+        self.assertEqual(data[16:24], bytes(map(flip, first)))
+        self.assertEqual(data[24:32], bytes(map(flip, reversed(first))))
+
+    def test_title_and_synthetic_maze(self):
+        maze = bytes([0xc3] * 5 + [0x43]) * 27  # 22 ordinary pellets per row
+        logo = bytes(range(138))
+        palette = bytes([0x0f, 0x20, 0x0f, 0x06, 0x0f, 0x26, 0x20, 0x27,
+                         0x0f, 0x06, 0x0f, 0x26, 0x0f, 0x06, 0x20, 0x26])
+        chr_data = bytes([255]) * 8192
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'test.sg'
+            build(maze, chr_data, path, logo=logo, title_palette=palette)
+            rom = path.read_bytes()
+        self.assertEqual(len(rom), 49152)
+        cpu, vdp = make_machine(rom)
+        advance(cpu, vdp, 60)
+        self.assertEqual(vdp.registers, [2, 194, 6, 255, 3, 54, 7, 1])
+        patterns, colors, names = title_assets(chr_data, logo, palette)
+        self.assertEqual(vdp.ram[:6144], patterns)
+        self.assertEqual(vdp.ram[8192:14336], colors)
+        self.assertEqual(vdp.ram[6144:6912], names)
+        vdp.pad = 0xef
+        advance(cpu, vdp, 70)
+        self.assertEqual(vdp.ram[14336:14336 + 288], pacman_sprite_patterns(chr_data))
+        self.assertEqual(vdp.ram[6916], 208)
+        self.assertEqual(vdp.ram[6144 + 2 * 32 + 22:6144 + 2 * 32 + 25], b'1UP')
+        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
+        for bank in range(3):
+            off = bank * 2048 + 0x2d * 8
+            self.assertEqual(vdp.ram[off:off + 8], bytes(8))
+            self.assertEqual(vdp.ram[8192 + off:8192 + off + 8], bytes([0x11] * 8))
+
+    def test_real_rom_movement_pellets_walls_and_tunnel(self):
         path = ROOT / 'pacman.nes'
         if not path.is_file():
             self.skipTest('no local NES ROM')
@@ -60,86 +126,67 @@ class ViewerTests(unittest.TestCase):
             path = Path(tmp) / 'real.sg'
             build(maze, chr_data, path, logo=logo, title_palette=palette)
             rom = path.read_bytes()
-        cpu, vdp = z80.Z80Machine(), VDP()
-        cpu.set_memory_block(0, rom)
-        cpu.set_input_callback(vdp.input)
-        cpu.set_output_callback(vdp.output)
-        for _ in range(60):
-            cpu.ticks_to_stop = 1000000
-            cpu.run()
-        patterns, colors, names = title_assets(chr_data, logo, palette)
-        self.assertEqual(vdp.ram[0:6144], patterns)
-        self.assertEqual(vdp.ram[8192:14336], colors)
-        self.assertEqual(vdp.ram[6144:6912], names)
-        vdp.pad = 0xef  # fire 1 starts the maze viewer
-        for _ in range(60):
-            cpu.ticks_to_stop = 1000000
-            cpu.run()
+        cpu, vdp = make_machine(rom)
+        advance(cpu, vdp, 60)
+        self.assertEqual(vdp.ram[6144:6912], title_assets(chr_data, logo, palette)[2])
+        vdp.pad = 0xef
+        advance(cpu, vdp, 120)
         vdp.pad = 0xff
+        advance(cpu, vdp, 10)
+        # Pac-Man automatically moves left, eats the five dots and stops at
+        # the wall to the left. NES score stores one unit for 10 points.
+        self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (52, 164))
+        self.assertEqual(bytes(cpu.memory[0xc270:0xc276]), b'\x05\0\0\0\0\0')
+        self.assertEqual(vdp.ram[6262:6269], b'     50')
+        for x in range(6, 11):
+            self.assertEqual(cpu.memory[0xc000 + 20 * 22 + x], 7)
+        self.assertIn(148, vdp.psg)  # chomp volume
+        self.assertEqual(vdp.psg[-1], 159)  # chomp ends muted
+        self.assertEqual(vdp.ram[6916], 208)
+        self.assertEqual(vdp.ram[6915] & 15, 11)  # yellow sprite
+        self.assertEqual(vdp.ram[14336:14336 + 288], pacman_sprite_patterns(chr_data))
+        camera = cpu.memory[0xc260]
         for row in range(24):
+            start = 0xc000 + (row + camera) * 22
             self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
-                             expected[row * 22:(row + 1) * 22])
-        # HUD font is white, not maze blue; tunnel blanks stay black.
-        for bank in range(3):
-            color_base = 8192 + bank * 2048
-            self.assertIn(0xf1, vdp.ram[color_base + ord('H') * 8:color_base + (ord('H') + 1) * 8])
-            self.assertEqual(vdp.ram[color_base + 4 * 8:color_base + 5 * 8], bytes([0x11] * 8))
-
-    def test_rom_boot_and_scrolling(self):
-        # Unique tile value per row lets us detect camera scroll.
-        maze = bytes(token for row in range(27)
-                     for token in ([192 + row] * 5 + [64 + row]))
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'test.sg'
-            # Nonzero CHR makes the blank-tile override observable.
-            logo = bytes(range(138))
-            palette = bytes([0x0f, 0x20, 0x0f, 0x06, 0x0f, 0x26, 0x20, 0x27,
-                             0x0f, 0x06, 0x0f, 0x26, 0x0f, 0x06, 0x20, 0x26])
-            build(maze, bytes([255]) * 8192, path, logo=logo, title_palette=palette)
-            rom = path.read_bytes()
-        self.assertEqual(len(rom), 49152)
-        cpu, vdp = z80.Z80Machine(), VDP()
-        cpu.set_memory_block(0, rom)
-        cpu.set_input_callback(vdp.input)
-        cpu.set_output_callback(vdp.output)
-        for _ in range(60):
-            cpu.ticks_to_stop = 1000000
-            cpu.run()
-        self.assertEqual(vdp.registers, [2, 192, 6, 255, 3, 54, 7, 1])
-        _, _, title_names = title_assets(bytes([255]) * 8192, logo, palette)
-        self.assertEqual(vdp.ram[6144:6912], title_names)
-        vdp.pad = 0xef  # fire 1
-        for _ in range(60):
-            cpu.ticks_to_stop = 1000000
-            cpu.run()
+                             bytes(cpu.memory[start:start + 22]))
+        # Reverse along consumed tiles; the same dots must not score twice.
+        vdp.pad = 0xf7  # right
+        advance(cpu, vdp, 35)
+        self.assertGreater(cpu.memory[0xc262], 52)
+        self.assertEqual(cpu.memory[0xc270], 5)
+        # An uneaten power pellet gives 50 points and clears once. Pac-Man
+        # is placed on a real power-pellet tile facing an adjacent wall.
+        cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
+        cpu.memory[0xc264], cpu.memory[0xc260], cpu.memory[0xc261] = 1, 0, 0
         vdp.pad = 0xff
-        self.assertEqual(vdp.ram[6912], 208)
-        # The margin/maze blank tile must render black in all three banks,
-        # regardless of the NES CHR pixels or the generic palette mapping.
-        for bank in range(3):
-            offset = bank * 2048 + 0x2d * 8
-            self.assertEqual(vdp.ram[offset:offset + 8], bytes(8))
-            self.assertEqual(vdp.ram[8192 + offset:8192 + offset + 8], bytes([0x11] * 8))
-        self.assertEqual(vdp.registers[7] & 15, 1)  # black VDP backdrop
-        self.assertEqual(vdp.ram[6144 + 2 * 32 + 22:6144 + 2 * 32 + 25], b'1UP')
-        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
-        for row in range(24):
-            self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
-                             bytes([row]) * 22)
-        vdp.pad = 0xfd  # down
-        for _ in range(70):
-            cpu.ticks_to_stop = 1000000
-            cpu.run()
-        self.assertEqual(cpu.memory[0xc260], 3)
-        for row in range(24):
-            self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
-                             bytes([row + 3]) * 22)
-        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
-        vdp.pad = 0xfe  # up
-        for _ in range(70):
-            cpu.ticks_to_stop = 1000000
-            cpu.run()
+        advance(cpu, vdp, 10)
+        self.assertEqual(cpu.memory[0xc000 + 3 * 22 + 2], 7)
+        self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (20, 28))
+        self.assertEqual(bytes(cpu.memory[0xc270:0xc276]), b'\0\x01\0\0\0\0')
+        self.assertEqual(vdp.ram[6262:6269], b'    100')
+        advance(cpu, vdp, 10)
+        self.assertEqual(bytes(cpu.memory[0xc270:0xc276]), b'\0\x01\0\0\0\0')
+        # The horizontal tunnel wraps to the other edge.
+        cpu.memory[0xc262], cpu.memory[0xc263] = 4, 108
+        cpu.memory[0xc264], cpu.memory[0xc261] = 1, 0
+        advance(cpu, vdp, 4)
+        self.assertGreaterEqual(cpu.memory[0xc262], 168)
+        self.assertLessEqual(cpu.memory[0xc262], 172)
+        # A legal upward turn moves Pac-Man along the corridor and the camera
+        # follows him, without changing the HUD columns.
+        cpu.memory[0xc262], cpu.memory[0xc263] = 52, 164
+        cpu.memory[0xc264], cpu.memory[0xc260], cpu.memory[0xc261] = 1, 3, 0
+        vdp.pad = 0xfe
+        advance(cpu, vdp, 130)
+        self.assertEqual(cpu.memory[0xc262], 52)
+        self.assertLess(cpu.memory[0xc263], 100)
         self.assertEqual(cpu.memory[0xc260], 0)
+        for row in range(24):
+            start = 0xc000 + row * 22
+            self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
+                             bytes(cpu.memory[start:start + 22]))
+        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
 
 
 if __name__ == '__main__':
