@@ -13,8 +13,8 @@ sound_frame:
     ld a,(49939)
     cp 2
     jr z,sound_event_tick     ; silence siren during death animation
-    ; Use the NES's priority: returning eyes, frightened, then three
-    ; pellet-count bands. Each one-frame note sequence loops on PSG tone 1.
+    ; Panic takes priority while frightened; otherwise returning eyes and
+    ; three pellet-count bands use the same PSG tone 1.
     call sound_siren_tick
 sound_event_tick:
     ; Start/restart an event when its kind changes or its frame counter is
@@ -86,6 +86,9 @@ sound_event_tick:
     jp sound_ready_voice
 
 sound_siren_tick:
+    ld a,(49791)
+    or a
+    jr nz,sound_siren_frightened
     ld hl,49814               ; ghost record state byte
     ld de,8
     ld b,4
@@ -97,9 +100,6 @@ sound_siren_tick:
     jr z,sound_siren_eyes
     add hl,de
     djnz sound_siren_scan_eyes
-    ld a,(49791)
-    or a
-    jr nz,sound_siren_frightened
     ld a,(49788)
     cp 136
     jr nc,sound_siren_high
@@ -269,8 +269,8 @@ sound_write_volume:
     ld (49952),a
     ret
 
-; Mute all previous output immediately. The saved pellet volume and stream
-; remain untouched, while popup audio replaces the siren and event channels.
+; Mute all previous output immediately. The pellet and siren sequencers stay
+; frozen while the ghost-eaten effect replaces the prior event on channel 2.
 sound_freeze:
     ld a,159
     out (127),a
@@ -282,15 +282,18 @@ sound_freeze:
     out (127),a
     ret
 
-; Only panic and ghost-eaten sounds run while the game simulation is frozen.
-; Select frightened explicitly even when previously eaten eyes exist.
+; Only the ghost-eaten effect runs while the game simulation is frozen.
 sound_popup_frame:
-    call sound_siren_frightened
     jp sound_event_tick
 
 sound_unfreeze:
-    ; Tone 0's frequency and sequencer were held throughout the pause. The
-    ; other two channels have already advanced and must not be rolled back.
+    ; Restart the frightened sound now, including when eyes are returning.
+    ; Forcing a fresh note also unmutes channel 1 if it was already playing
+    ; panic when the freeze began.
+    ld a,255
+    ld (49926),a
+    call sound_siren_frightened
+    ; Tone 0's frequency and sequencer were held throughout the pause.
     ld a,(49951)
     out (127),a
     ret

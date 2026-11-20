@@ -176,6 +176,7 @@ class GameplayTests(unittest.TestCase):
         frame_counter = cpu.memory[0xc261]
         release_ticks = bytes(cpu.memory[0xc30c:0xc30e])
         chomp_state = bytes(cpu.memory[0xc2fc:0xc2ff])
+        siren_state = bytes(cpu.memory[0xc303:0xc307])
         saved_chomp_volume = cpu.memory[0xc31f]
         self.assertEqual(vdp.psg[-4:], [159, 191, 223, 255])
         psg_len = len(vdp.psg)
@@ -189,16 +190,19 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)
         self.assertEqual(bytes(cpu.memory[0xc290:0xc2b0]), ghosts)
         self.assertEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
-        self.assertEqual(cpu.memory[0xc306], 1)  # frightened, even with eyes
+        self.assertEqual(bytes(cpu.memory[0xc303:0xc307]), siren_state)
         self.assertEqual(cpu.memory[0xc282], 1)
-        self.assertIn(185, vdp.psg[psg_len:])  # frightened sound
+        self.assertNotIn(185, vdp.psg[psg_len:])  # panic is silent
         self.assertIn(212, vdp.psg[psg_len:])  # ghost-eaten sound
         self.assertEqual(bytes(vdp.ram), display)  # no animation or redraw
         self.assertEqual(cpu.memory[0xc27f], frightened)
         self.assertEqual(cpu.memory[0xc261], frame_counter)
         self.assertEqual(bytes(cpu.memory[0xc30c:0xc30e]), release_ticks)
         self.assertEqual(vdp.ram[6914], 228)
+        psg_before_resume = len(vdp.psg)
         advance(cpu, vdp, 1)
+        self.assertIn(185, vdp.psg[psg_before_resume:])  # panic restarts
+        self.assertEqual(cpu.memory[0xc306], 1)  # even with eyes present
         self.assertEqual(cpu.memory[0xc31a], 0)
         self.assertEqual(cpu.memory[0xc296], 1)
         self.assertNotEqual(vdp.ram[6914], 228)  # Pac-Man reappears
@@ -208,6 +212,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
         advance(cpu, vdp, 1)
         self.assertNotEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)
+        self.assertEqual(cpu.memory[0xc306], 1)  # panic continues after resume
         # A second ghost awards 400 and uses the NES's 38-frame repeat pause.
         cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 20, 28, 1
         cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
@@ -215,7 +220,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc31a], 38)
         self.assertEqual(vdp.ram[6914], 232)
 
-    def test_popup_plays_only_ghost_sounds_and_resumes_chomp(self):
+    def test_popup_plays_only_ghost_eaten_and_resumes_panic_and_chomp(self):
         cpu, vdp = self.new_game()
         # Put an unrelated effect and a pellet sound on their channels.
         cpu.memory[0xc282], cpu.memory[0xc283] = 60, 5
@@ -232,21 +237,25 @@ class GameplayTests(unittest.TestCase):
         saved_volume = cpu.memory[0xc31f]
         self.assertEqual(vdp.psg[-4:], [159, 191, 223, 255])
         chomp_state = bytes(cpu.memory[0xc2fc:0xc2ff])
+        siren_state = bytes(cpu.memory[0xc303:0xc307])
         start = len(vdp.psg)
         advance(cpu, vdp, 1)
         self.assertEqual(cpu.memory[0xc283], 1)
         self.assertEqual(cpu.memory[0xc2fa], 1)  # ghost event replaced extra-life
         self.assertEqual(cpu.memory[0xc282], 39)
-        self.assertEqual(cpu.memory[0xc306], 1)  # panic selected
-        self.assertIn(185, vdp.psg[start:])
+        self.assertEqual(bytes(cpu.memory[0xc303:0xc307]), siren_state)
+        self.assertNotIn(185, vdp.psg[start:])
         self.assertIn(212, vdp.psg[start:])
         self.assertEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
         advance(cpu, vdp, 38)
         self.assertEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
-        # All latch writes in the freeze address only channels 1 or 2.
-        self.assertTrue(all(not (128 <= n < 160) and n < 224
-                            for n in vdp.psg[start:] if n >= 128))
+        # All latch writes in the freeze address only channel 2.
+        self.assertTrue(all(192 <= n < 224 for n in vdp.psg[start:] if n >= 128))
+        self.assertEqual(bytes(cpu.memory[0xc303:0xc307]), siren_state)
+        resume = len(vdp.psg)
         advance(cpu, vdp, 1)
+        self.assertIn(185, vdp.psg[resume:])
+        self.assertEqual(cpu.memory[0xc306], 1)
         self.assertEqual(vdp.psg[-1], saved_volume)
         self.assertEqual(bytes(cpu.memory[0xc2fc:0xc2ff]), chomp_state)
         self.assertEqual(cpu.memory[0xc282], 0)

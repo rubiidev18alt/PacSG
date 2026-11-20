@@ -37,7 +37,7 @@ ghost_popup_draw:
     ret
 
 ghost_popup_tick:
-    call sound_popup_frame    ; only frightened and ghost-eaten audio advances
+    call sound_popup_frame    ; only the ghost-eaten audio advances
     ld a,(49946)
     dec a
     ld (49946),a
