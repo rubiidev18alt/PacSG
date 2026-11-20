@@ -73,6 +73,9 @@ sound_event_tick:
     ld e,212
     call sound_ready_voice
  sound_chomp_tick:
+    ld a,(49946)
+    or a
+    ret nz                    ; pellet audio stays frozen during the popup
     ld hl,(49916)
     ld a,h
     or l
@@ -250,9 +253,7 @@ sound_ready_voice:
     add a,31
     jp sound_write_volume
 
-; Track the last volume latch for each tone. The PSG keeps its frequency
-; registers during the score freeze, so restoring these latches resumes the
-; exact held notes without advancing any stream. A is preserved.
+; Track the last volume latch for each tone. A is preserved.
 sound_write_volume:
     out (127),a
     cp 176
@@ -268,8 +269,9 @@ sound_write_volume:
     ld (49952),a
     ret
 
+; Mute all previous output immediately. The saved pellet volume and stream
+; remain untouched, while popup audio replaces the siren and event channels.
 sound_freeze:
-    ; Do not modify the saved volume latches while muting the hardware.
     ld a,159
     out (127),a
     ld a,191
@@ -280,11 +282,15 @@ sound_freeze:
     out (127),a
     ret
 
+; Only panic and ghost-eaten sounds run while the game simulation is frozen.
+; Select frightened explicitly even when previously eaten eyes exist.
+sound_popup_frame:
+    call sound_siren_frightened
+    jp sound_event_tick
+
 sound_unfreeze:
+    ; Tone 0's frequency and sequencer were held throughout the pause. The
+    ; other two channels have already advanced and must not be rolled back.
     ld a,(49951)
-    out (127),a
-    ld a,(49952)
-    out (127),a
-    ld a,(49953)
     out (127),a
     ret

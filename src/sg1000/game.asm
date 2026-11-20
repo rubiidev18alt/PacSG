@@ -70,7 +70,7 @@ init_game_misc_flags:
     ret
 
 game_frame:
-    ; The score freeze holds the entire simulation and sound sequencers.
+    ; The score freeze holds the simulation; only ghost sounds continue.
     ld a,(49946)
     or a
     jp nz,ghost_popup_tick

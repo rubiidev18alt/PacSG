@@ -22,8 +22,8 @@ The prototype includes walls and tunnel wrapping, dots and energizers,
 10/50-point scoring, a frightened timer, flashing frightened ghosts, and
 200/400/800/1600-point ghost chains. Eating a ghost briefly freezes the action,
 shows its NES-derived point sprite, and then sends it home as eyes. During the
-pause all actors, animations, timers, and sound sequencers are frozen; the PSG
-is muted and its previous tone volumes are restored when play resumes. This
+pause all actors, animations, and gameplay timers are frozen. Only the ghost-eaten
+and frightened-ghost sounds play; pellet audio is held until play resumes. This
 intentionally differs from the NES, where previously returning eyes keep moving. Fruit appears at the original pellet thresholds, with the
 round-dependent fruit and scores; it uses two extra sprite layers rather than
 erasing maze tiles. READY!, PLAYER and ONE use the NES sprite glyphs, drawn as

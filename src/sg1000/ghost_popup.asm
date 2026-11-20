@@ -37,9 +37,11 @@ ghost_popup_draw:
     ret
 
 ghost_popup_tick:
-    dec a                    ; A = nonzero popup frames remaining
+    call sound_popup_frame    ; only frightened and ghost-eaten audio advances
+    ld a,(49946)
+    dec a
     ld (49946),a
-    ret nz                    ; no simulation, sprite or sound updates
+    ret nz                    ; no simulation or sprite updates
     ; Release the just-eaten ghost as eyes; the NES retains a value of 2
     ; in its pause accumulator for subsequent captures in the same round.
     ld a,2
