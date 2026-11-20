@@ -278,6 +278,23 @@ def fruit_sprite_patterns(chr_data):
     return bytes(result)
 
 
+def fruit_hud_tiles(chr_data):
+    """NES fruit actors as 32 Graphics II HUD tiles, four per fruit.
+
+    The TMS permits only two colors per row, so reduce the occasional row
+    containing both green and fruit color alongside black.
+    """
+    if len(chr_data) != 8192:
+        raise ValueError('expected 8192 bytes of NES CHR data')
+    patterns, colors = bytearray(), bytearray()
+    for fruit, body in enumerate((8, 8, 9, 8, 3, 11, 11, 15)):
+        start = 4096 + (0x90 + fruit * 4) * 16
+        p, c, _ = convert(chr_data[start:start + 64], [1, 3, body, body], True)
+        patterns.extend(p)
+        colors.extend(c)
+    return bytes(patterns), bytes(colors)
+
+
 # NES ghost score OAM frames 2D, 2F, 32 and 34: 200, 400, 800, 1600.
 GHOST_SCORE_FRAMES = (
     (0x32, 0x2f, 0x33, 0x31),
@@ -358,6 +375,10 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
         for row in range(tile * 8, tile * 8 + 8):
             fg, bg = colors[row] >> 4, colors[row] & 15
             colors[row] = ((11 if fg == 15 else fg) << 4) | (11 if bg == 15 else bg)
+    # Dedicated, scroll-independent HUD fruit tiles (IDs C0..DF).
+    fruit_patterns, fruit_colors = fruit_hud_tiles(chr_data)
+    patterns[0xc0 * 8:0xe0 * 8] = fruit_patterns
+    colors[0xc0 * 8:0xe0 * 8] = fruit_colors
     # Text uses background tiles to avoid the TMS9918's four-sprites-per-line
     # limit. These IDs do not occur in the decoded maze or the HUD.
     ready_patterns = ready_text_patterns(chr_data)

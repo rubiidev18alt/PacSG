@@ -5,7 +5,7 @@ import unittest
 
 from test_maze_viewer import ROOT, advance, make_machine
 from build_maze_viewer import (assets_from_rom, build, death_sprite_patterns,
-                               fruit_sprite_patterns, ghost_score_sprite_patterns,
+                               fruit_hud_tiles, fruit_sprite_patterns, ghost_score_sprite_patterns,
                                ghost_sprite_patterns, pacman_sprite_patterns,
                                ready_text_patterns, title_assets)
 from convert_chr import convert
@@ -520,6 +520,47 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc290], 92)
         advance(cpu, vdp, 60)
         self.assertIn(cpu.memory[0xc296], (0, 2))  # back to active maze movement
+
+    def test_hud_fruit_history_tracks_rounds_and_ignores_scrolling(self):
+        cpu, vdp = self.new_game()
+        patterns, colors = fruit_hud_tiles(self.chr_data)
+        # Both color and pattern tiles are in the middle Graphics II bank.
+        self.assertEqual(vdp.ram[2048 + 0xc0 * 8:2048 + 0xe0 * 8], patterns)
+        self.assertEqual(vdp.ram[8192 + 2048 + 0xc0 * 8:8192 + 2048 + 0xe0 * 8], colors)
+        addresses = (6550, 6552, 6554, 6556, 6614, 6616, 6618)
+        groups = (0, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7)
+
+        def assert_history(level):
+            first = max(0, level - 7)
+            for slot, address in enumerate(addresses):
+                if slot >= level:
+                    self.assertEqual(vdp.ram[address:address + 2], bytes([45, 45]))
+                    self.assertEqual(vdp.ram[address + 32:address + 34], bytes([45, 45]))
+                    continue
+                fruit = groups[min(first + slot, 12)]
+                tile = 0xc0 + 4 * fruit
+                self.assertEqual(vdp.ram[address:address + 2], bytes([tile, tile + 1]))
+                self.assertEqual(vdp.ram[address + 32:address + 34], bytes([tile + 2, tile + 3]))
+
+        assert_history(1)
+        for level in (2, 7, 8, 13, 19, 99):
+            cpu.memory[0xc27d] = level - 1
+            cpu.memory[0xc281] = 0
+            cpu.memory[0xc2b6] = 1
+            advance(cpu, vdp, 5, ghosts_disabled=True)
+            self.assertEqual(cpu.memory[0xc27d], level)
+            assert_history(level)
+        # The maze scrolling redraw touches only the left 22 columns.
+        before = bytes(vdp.ram[6144:6912])
+        cpu.memory[0xc281] = 0
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 52, 12, 1
+        cpu.memory[0xc260], cpu.memory[0xc261] = 3, 0
+        advance(cpu, vdp, 20, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc260], 0)
+        for row in range(12, 16):
+            self.assertEqual(vdp.ram[6144 + row * 32 + 22:6144 + row * 32 + 30],
+                             before[6144 + row * 32 + 22 - 6144:6144 + row * 32 + 30 - 6144])
+        assert_history(99)
 
     def test_fruit_threshold_scoring_layers_and_expiry(self):
         cpu, vdp = self.new_game()

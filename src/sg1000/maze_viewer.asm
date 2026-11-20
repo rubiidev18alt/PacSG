@@ -222,6 +222,7 @@ clear_names_loop:
     call game_draw_high
     call game_draw_lives
     call game_draw_round
+    call fruit_draw_history
     call player_draw_score
     call player_draw_sprite
     call ghost_draw

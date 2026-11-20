@@ -115,3 +115,70 @@ fruit_draw:
     ld a,(hl)
     out (190),a
     ret
+
+; NES shows up to seven stage fruit icons, four on the first row and three
+; on the next. The SG-1000 HUD puts these at rows 12-15 to leave room for
+; spare lives and the round counter. Tiles are background graphics, so the
+; icons do not compete with actors for the four-sprites-per-scanline limit.
+fruit_draw_history:
+    ld a,(49789)              ; round, 1-based
+    or a
+    ret z
+    cp 8
+    jr c,fruit_history_short
+    sub 7                     ; zero-based oldest stage for seven icons
+    cp 13
+    jr c,fruit_history_start_ready
+    ld a,12                   ; stage 13 onward is always the key
+ fruit_history_start_ready:
+    ld c,a
+    ld b,7
+    jr fruit_history_loop_init
+ fruit_history_short:
+    ld b,a
+    ld c,0
+ fruit_history_loop_init:
+    ld ix,fruit_history_addresses
+ fruit_history_loop:
+    push bc
+    ld a,c
+    cp 13
+    jr c,fruit_history_stage_ready
+    ld a,12
+ fruit_history_stage_ready:
+    ld e,a
+    ld d,0
+    ld hl,fruit_stage_table
+    add hl,de
+    ld a,(hl)
+    add a,a
+    add a,a
+    add a,192                ; each fruit occupies four HUD tile IDs
+    push af
+    ld e,(ix+0)
+    ld d,(ix+1)
+    call set_vram_write
+    pop af
+    push af
+    out (190),a              ; top left
+    inc a
+    out (190),a              ; top right
+    ld e,(ix+0)
+    ld d,(ix+1)
+    ld hl,32
+    add hl,de
+    ex de,hl
+    call set_vram_write
+    pop af
+    add a,2
+    out (190),a              ; bottom left
+    inc a
+    out (190),a              ; bottom right
+    inc ix
+    inc ix
+    pop bc
+    inc c
+    djnz fruit_history_loop
+    ret
+fruit_history_addresses:
+    defw 6550,6552,6554,6556,6614,6616,6618

@@ -35,7 +35,9 @@ original CHR/OAM frames before deducting a life. The actors then respawn without
 resetting dots; losing the last life shows GAME OVER and returns to the title.
 Clearing all 192 dots starts the next round with the maze restored. The HUD has
 NES-derived score labels and life icons, a working score/high score, a one-time
-extra life at 10,000, and a numeric round indicator. The high score is retained
+extra life at 10,000, a numeric round indicator, and a seven-icon stage fruit
+history. The fruit history uses background tiles in the right HUD (four icons
+above three) to avoid the hardware sprite limit. The high score is retained
 across game overs while the machine stays powered on.
 
 Pac-Man's and the ghosts' 16x16 masks are composed from the original NES CHR

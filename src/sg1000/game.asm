@@ -246,6 +246,7 @@ game_next_level:
     out (191),a
     call draw_maze
     call game_draw_round
+    call fruit_draw_history
     call player_draw_sprite
     call ghost_draw
     call game_show_clear
