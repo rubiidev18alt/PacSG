@@ -74,6 +74,9 @@ game_frame:
     ld a,(49939)
     or a
     jp nz,game_death_tick
+    ld a,(49946)
+    or a
+    jp nz,ghost_popup_tick
     ld a,(49793)
     or a
     jr z,game_active

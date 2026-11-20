@@ -1,7 +1,7 @@
 ; Four SG-1000 ghost approximations. Each C290 record is eight bytes:
 ; X, Y, direction, release/respawn wait, color, speed fraction,
 ; state (0 active, 1 returning eyes, 2 recovered immune, 3 house,
-; 4 exiting, 5 entering), house direction/eyes-release flag.
+; 4 exiting, 5 entering, 6 score popup), house direction/eyes-release flag.
 ; Ghosts use two NES-derived sprite masks: colored body plus white eyes.
 ; The TMS9918's four-sprites-per-scanline limit is mitigated by rotating ghost
 ; priority, but layered sprites can flicker/drop when many actors overlap.
@@ -25,6 +25,9 @@ ghost_init:
     ld (49936),a
     ld (49937),a              ; personal release / scatter mask latch
     ld (49938),a              ; NES frightened 60-frame divider
+    ld (49946),a              ; active score pause countdown
+    ld (49947),a              ; NES post-eat pause accumulator starts at zero
+    ld (49950),a              ; reduced update flag
     call ghost_release_init
     call ghost_load_phase_duration
     ret
@@ -213,8 +216,17 @@ ghost_reverse_all:
     ret
 
 ghost_frame:
+    xor a
+    ld (49950),a
     call ghost_mode_tick
     call ghost_release_tick
+    jr ghost_frame_common
+
+; During the score freeze, only pre-existing returning eyes get movement.
+ghost_eyes_frame:
+    ld a,1
+    ld (49950),a
+ ghost_frame_common:
     ld a,(49762)
     ld (49805),a
     ld a,(49763)
@@ -225,6 +237,13 @@ ghost_frame:
     ld b,4
  ghost_frame_loop:
     push bc
+    ld a,(49950)
+    or a
+    jr z,ghost_full_slot
+    ld a,(ix+6)
+    cp 1
+    jp nz,ghost_next
+ ghost_full_slot:
     ld a,(ix+3)
     or a
     jr z,ghost_released
@@ -239,6 +258,8 @@ ghost_frame:
     jp z,ghost_house_exit
     cp 5
     jp z,ghost_house_enter
+    cp 6
+    jp z,ghost_next
     cp 2
     jr nz,ghost_check_returning
     ld a,(49791)
@@ -360,9 +381,16 @@ ghost_frame:
     call ghost_collide
  ghost_next:
     pop bc
+    ld a,(49950)
+    or a
+    jr nz,ghost_next_slot      ; reduced update continues through all eyes
     ld a,(49793)
     or a
     jr nz,ghost_frame_done     ; death/respawn pause was started
+    ld a,(49946)
+    or a
+    jr nz,ghost_frame_done     ; stop immediately after one ghost is eaten
+ ghost_next_slot:
     ld de,8
     add ix,de
     ld a,(49807)
@@ -927,6 +955,7 @@ ghost_collide:
     jr c,ghost_combo_index_ready
     ld a,3
  ghost_combo_index_ready:
+    ld (49949),a              ; popup index before chain increments
     ld e,a
     ld d,0
     ld hl,ghost_score_hundreds
@@ -946,8 +975,16 @@ ghost_collide:
     ld (49792),a
  ghost_combo_capped:
     call game_commit_score
-    ld (ix+6),1               ; return as eyes, do not teleport
+    ld (ix+6),6               ; NES eaten-score state until pause completes
     ld (ix+5),0
+    ld a,(49807)
+    ld (49948),a              ; retain eaten slot
+    ld a,(49947)
+    ld b,a
+    ld a,40
+    sub b                     ; first pause 40 frames, subsequent pauses 38
+    ld (49946),a
+    call ghost_popup_draw
     ld a,40
     ld (49794),a
     ld a,1
@@ -996,6 +1033,9 @@ ghost_draw:
     ret
 
 ghost_draw_one:
+    ld a,(ix+6)
+    cp 6
+    jp z,ghost_draw_hidden
     ld a,(ix+3)
     or a
     jp nz,ghost_draw_hidden

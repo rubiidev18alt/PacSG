@@ -278,6 +278,28 @@ def fruit_sprite_patterns(chr_data):
     return bytes(result)
 
 
+# NES ghost score OAM frames 2D, 2F, 32 and 34: 200, 400, 800, 1600.
+GHOST_SCORE_FRAMES = (
+    (0x32, 0x2f, 0x33, 0x31),
+    (0x36, 0x2f, 0x37, 0x31),
+    (0x3c, 0x2f, 0x3d, 0x31),
+    (0x42, 0x3f, 0x43, 0x41),
+)
+
+
+def ghost_score_sprite_patterns(chr_data):
+    """Convert the original score-popup OAM quadrants to TMS sprite masks."""
+    if len(chr_data) != 8192:
+        raise ValueError('expected 8192 bytes of NES CHR data')
+    result = bytearray()
+    for tiles in GHOST_SCORE_FRAMES:
+        for index in (0, 2, 1, 3):
+            start = 4096 + tiles[index] * 16
+            tile = chr_data[start:start + 16]
+            result.extend(tile[y] | tile[y + 8] for y in range(8))
+    return bytes(result)
+
+
 def eye_routes(maze):
     """Shortest legal exit back to the ghost-house entrance for each tile."""
     from collections import deque
@@ -352,6 +374,7 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
                        (ROOT / 'src/sg1000/game.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/death.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/ghosts.asm').read_text() + '\n' +
+                       (ROOT / 'src/sg1000/ghost_popup.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/sound.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/fruit.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/score.asm').read_text() + '\n' +
@@ -365,7 +388,8 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
                              ghost_sprite_patterns(chr_data) +
                              ghost_sprite_patterns(chr_data, eyes=True) +
                              fruit_sprite_patterns(chr_data) +
-                             death_sprite_patterns(chr_data)))
+                             death_sprite_patterns(chr_data) +
+                             ghost_score_sprite_patterns(chr_data)))
         subprocess.run([assembler, '--obj=' + str(binary), str(asm)], check=True)
         rom = binary.read_bytes()
     if len(rom) > 49152:

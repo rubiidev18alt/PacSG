@@ -5,8 +5,9 @@ import unittest
 
 from test_maze_viewer import ROOT, advance, make_machine
 from build_maze_viewer import (assets_from_rom, build, death_sprite_patterns,
-                               fruit_sprite_patterns, ghost_sprite_patterns,
-                               pacman_sprite_patterns, ready_text_patterns, title_assets)
+                               fruit_sprite_patterns, ghost_score_sprite_patterns,
+                               ghost_sprite_patterns, pacman_sprite_patterns,
+                               ready_text_patterns, title_assets)
 from convert_chr import convert
 from nes_audio import STREAMS, psg_events
 
@@ -129,7 +130,7 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc292], 3)  # reversed on energizer
         self.assertEqual(cpu.memory[0xc000 + 3 * 22 + 2], 7)
         self.assertEqual(vdp.ram[6919] & 15, 4)  # blue frightened ghost
-        for expected in (250, 650, 1450, 3050):
+        for index, expected in enumerate((250, 650, 1450, 3050)):
             cpu.memory[0xc290], cpu.memory[0xc291] = 20, 28
             cpu.memory[0xc292], cpu.memory[0xc293] = 1, 0
             cpu.memory[0xc296] = 0
@@ -137,10 +138,77 @@ class GameplayTests(unittest.TestCase):
             digits = cpu.memory[0xc270:0xc276]
             score = sum(digit * 10 ** (i + 1) for i, digit in enumerate(digits))
             self.assertEqual(score, expected)
-            self.assertEqual(cpu.memory[0xc296], 1)  # ghost returns as eyes
+            self.assertEqual(cpu.memory[0xc296], 6)  # NES score popup state
+            self.assertEqual(vdp.ram[6914], 228 + 4 * index)
+            self.assertEqual(cpu.memory[0xc31a], 40 if index == 0 else 38)
             self.assertEqual(cpu.memory[0xc27e], 3)
+            advance(cpu, vdp, cpu.memory[0xc31a])
+            self.assertEqual(cpu.memory[0xc296], 1)  # returns as eyes
         self.assertEqual(vdp.ram[6390:6397], b'   3050')
         self.assertEqual(cpu.memory[0xc280], 3)  # capped chain index
+
+    def test_ghost_score_popup_freezes_play_and_moves_prior_eyes(self):
+        cpu, vdp = self.new_game()
+        self.assertEqual(vdp.ram[14336 + 1824:14336 + 1952],
+                         ghost_score_sprite_patterns(self.chr_data))
+        cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 28, 1
+        cpu.memory[0xc260], cpu.memory[0xc261] = 0, 0
+        cpu.memory[0xc27f], cpu.memory[0xc2d4] = 100, 0
+        cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 20, 28, 1
+        cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
+        # A previous ghost's returning eyes move; another active ghost freezes.
+        cpu.memory[0xc298], cpu.memory[0xc299], cpu.memory[0xc29a] = 52, 68, 1
+        cpu.memory[0xc29b], cpu.memory[0xc29e] = 0, 1
+        cpu.memory[0xc2a0], cpu.memory[0xc2a1] = 132, 68
+        cpu.memory[0xc2a3], cpu.memory[0xc2a6] = 0, 0
+        cpu.memory[0xc2ab] = 255
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc31a], 40)
+        self.assertEqual(cpu.memory[0xc296], 6)
+        self.assertEqual((vdp.ram[6912], vdp.ram[6913]), (19, 12))
+        self.assertEqual((vdp.ram[6914], vdp.ram[6915] & 15), (228, 7))
+        self.assertEqual(vdp.ram[6916], 209)  # captured ghost hidden
+        pac = bytes(cpu.memory[0xc262:0xc264])
+        other = bytes(cpu.memory[0xc2a0:0xc2a2])
+        eyes = bytes(cpu.memory[0xc298:0xc29a])
+        frightened = cpu.memory[0xc27f]
+        frame_counter = cpu.memory[0xc261]
+        release_ticks = bytes(cpu.memory[0xc30c:0xc30e])
+        advance(cpu, vdp, 39)
+        self.assertEqual(cpu.memory[0xc31a], 1)
+        self.assertEqual(cpu.memory[0xc296], 6)
+        self.assertEqual(bytes(cpu.memory[0xc262:0xc264]), pac)
+        self.assertEqual(bytes(cpu.memory[0xc2a0:0xc2a2]), other)
+        self.assertNotEqual(bytes(cpu.memory[0xc298:0xc29a]), eyes)
+        self.assertEqual(cpu.memory[0xc27f], frightened)
+        self.assertEqual(cpu.memory[0xc261], frame_counter)
+        self.assertEqual(bytes(cpu.memory[0xc30c:0xc30e]), release_ticks)
+        self.assertEqual(vdp.ram[6914], 228)
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc31a], 0)
+        self.assertEqual(cpu.memory[0xc296], 1)
+        self.assertNotEqual(vdp.ram[6914], 228)  # Pac-Man reappears
+        self.assertEqual(cpu.memory[0xc31b], 2)
+        # A second ghost awards 400 and uses the NES's 38-frame repeat pause.
+        cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 20, 28, 1
+        cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc31a], 38)
+        self.assertEqual(vdp.ram[6914], 232)
+
+    def test_score_popup_scroll_and_tunnel_early_clock(self):
+        cpu, vdp = self.new_game()
+        for n in range(1, 4):
+            cpu.memory[0xc293 + n * 8] = 255
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 4, 108, 3
+        cpu.memory[0xc260], cpu.memory[0xc300] = 3, 0
+        cpu.memory[0xc27f], cpu.memory[0xc2d4] = 100, 0
+        cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 4, 108, 3
+        cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc31a], 40)
+        self.assertEqual(vdp.ram[6912:6916], bytes([75, 28, 228, 0x87]))
 
     def test_mode_timer_reverses_and_pauses_for_frightened(self):
         cpu, vdp = self.new_game()

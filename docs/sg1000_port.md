@@ -20,8 +20,9 @@ while the HUD stays fixed: the 27-row NES maze is taller than the TMS9918's
 
 The prototype includes walls and tunnel wrapping, dots and energizers,
 10/50-point scoring, a frightened timer, flashing frightened ghosts, and
-200/400/800/1600-point ghost chains. Eaten ghosts return as eyes to the
-house entrance. Fruit appears at the original pellet thresholds, with the
+200/400/800/1600-point ghost chains. Eating a ghost briefly freezes the action,
+shows its NES-derived point sprite, and then sends it home as eyes. Previously
+returning eyes continue moving during this pause. Fruit appears at the original pellet thresholds, with the
 round-dependent fruit and scores; it uses two extra sprite layers rather than
 erasing maze tiles. READY!, PLAYER and ONE use the NES sprite glyphs, drawn as
 temporary maze background tiles to avoid the sprite-per-scanline limit; the
@@ -100,7 +101,8 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m unittest discover -s tests/sg100
 * `src/sg1000/ghosts.asm` implements ghost targeting, release, house movement,
   collisions, frightened sprites and sprite-priority rotation.
 * `src/sg1000/fruit.asm` manages the bonus fruit, scoring and sprite layers.
-* `src/sg1000/death.asm` manages the death freeze, animation and life transition.
+* `src/sg1000/death.asm` manages the death freeze, animation and life transition;
+  `src/sg1000/ghost_popup.asm` handles the ghost score freeze and popup.
 * `src/sg1000/game.asm` manages lives, high score, game over and level reset;
   `src/sg1000/sound.asm` manages the siren and event-sound channels.
 * `src/sg1000/maze_viewer.asm` sets up the TMS9918 title, maze and HUD;
