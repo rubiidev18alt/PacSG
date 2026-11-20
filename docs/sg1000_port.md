@@ -28,8 +28,8 @@ that displays the original maze can be built, but it is not Pac-Man. The NES sou
   22 tile NES maze asset. The SG-1000's 32 by 24 tile display cannot show this
   map unchanged; adapting the layout is still necessary.
 
-No original asset is included. Run `make split` with the original v1.0 ROM and
-Retrolarium Kit to obtain the inputs. For example:
+To obtain individual v1.0 assets, run `make split` with the original v1.0 ROM
+and Retrolarium Kit. For example:
 
 ```
 python3 scripts/sg1000/decode_maze.py assets/generated/maze/maze.rle build/sg1000/maze.bin
@@ -49,18 +49,21 @@ python3 -m venv .venv
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m unittest discover -s tests/sg1000 -v
 ```
 
-The rest of the game, sound, input, VDP renderer, memory layout and a 48 KiB
-ROM build and emulator/hardware validation remain to be done.
+The game, sound, gameplay input, renderer integration and full emulator/hardware
+validation remain to be done.
 
 ## Diagnostic cartridge
 
-Once assets are extracted and `pyz80` is on PATH, run:
+With `pyz80` on PATH, and either a verified Japan v1.0 or USA Namco ROM in
+`pacman.nes`, run:
 
 ```
 make sg1000-maze-viewer
+# Or select another ROM path: make sg1000-maze-viewer SG1000_ROM=path/to/file.nes
 ```
 
 This writes `build/sg1000/maze-viewer.sg`, a raw 49,152-byte ROM, padded with
-`FF`. It verifies the Japan v1.0 maze and CHR hashes. It is a maze viewer,
+`FF`. It verifies the input ROM and maze/CHR hashes. The USA Namco release uses its
+regional CHR with the same maze. It is a maze viewer,
 **not a playable port**. Its tile colors are a lossy approximation; the NES
 uses palette attributes that are not represented in this diagnostic.

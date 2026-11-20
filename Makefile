@@ -149,5 +149,6 @@ help:
 
 # SG-1000 development diagnostic only; this is not a playable game port.
 .PHONY: sg1000-maze-viewer
+SG1000_ROM ?= pacman.nes
 sg1000-maze-viewer:
-	$(PYTHON) scripts/sg1000/build_maze_viewer.py
+	$(PYTHON) scripts/sg1000/build_maze_viewer.py --rom "$(SG1000_ROM)"

@@ -8,7 +8,8 @@ import z80
 ROOT = Path(__file__).resolve().parents[2]
 import sys
 sys.path.insert(0, str(ROOT / 'scripts/sg1000'))
-from build_maze_viewer import build
+from build_maze_viewer import assets_from_rom, build
+from decode_maze import decode
 
 
 class VDP:
@@ -41,6 +42,35 @@ class VDP:
 
 
 class ViewerTests(unittest.TestCase):
+    def test_reject_unrecognized_rom(self):
+        with self.assertRaisesRegex(ValueError, 'verified'):
+            assets_from_rom(bytes(24592))
+
+    def test_uploaded_rom_boots_with_real_maze(self):
+        path = ROOT / 'pacman.nes'
+        if not path.is_file():
+            self.skipTest('no local NES ROM')
+        try:
+            maze, chr_data, _ = assets_from_rom(path.read_bytes())
+        except ValueError:
+            self.skipTest('local ROM is not a supported revision')
+        expected, used = decode(maze)
+        self.assertEqual(used, len(maze))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'real.sg'
+            build(maze, chr_data, path)
+            rom = path.read_bytes()
+        cpu, vdp = z80.Z80Machine(), VDP()
+        cpu.set_memory_block(0, rom)
+        cpu.set_input_callback(vdp.input)
+        cpu.set_output_callback(vdp.output)
+        for _ in range(60):
+            cpu.ticks_to_stop = 1000000
+            cpu.run()
+        for row in range(24):
+            self.assertEqual(vdp.ram[6144 + row * 32 + 5:6144 + row * 32 + 27],
+                             expected[row * 22:(row + 1) * 22])
+
     def test_rom_boot_and_scrolling(self):
         # Unique tile value per row lets us detect camera scroll.
         maze = bytes(token for row in range(27)
