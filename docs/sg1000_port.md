@@ -1,12 +1,12 @@
 # SG-1000 Pac-Man prototype (incomplete)
 
 The 48 KiB cartridge has the NES-derived title, maze, Pac-Man and four ghosts.
-It is **not a complete or cycle-accurate NES port**: ghost navigation and
-release and house transitions are simplified, and intermissions, two-player
+It is **not a complete or cycle-accurate NES port**: intermissions, two-player
 mode and the full NES audio engine are not implemented. Returning eyes use a
-precomputed shortest route rather than the NES's exact navigation. Speed and
-timing profiles are approximations, not complete NES behavior. The NES source is 6502 code and cannot run
-unchanged on the SG-1000's Z80.
+precomputed shortest route rather than the NES's navigation, and the NES cached
+PPU probe pipeline, corner-turn substeps, tunnel wrapping and some collision and
+animation details are still simplified. The NES source is 6502 code and cannot
+run unchanged on the SG-1000's Z80.
 
 ## Controls and current behavior
 
@@ -33,27 +33,33 @@ Pac-Man's and the ghosts' 16x16 masks are composed from the original NES CHR
 and OAM flip attributes. Each ghost uses separate colored-body and white-eye
 sprites (blue and flashing white when frightened). The TMS9918 displays at most
 four sprites on one scanline: layering increases dropout, and ghost priority
-rotates to distribute the resulting flicker. Ghosts use NES-inspired scatter and
-chase targets, non-reversing ranked turns, frightened choices and per-round
-speed and frightened-time approximations. The long later-round chase phases,
-house releases and return-to-house transitions are still simplified. Title and
-maze colors are approximations because each background tile row supports only
-two colors. Movement and audio are approximations, not exact NES behavior.
+rotates to distribute the resulting flicker. Pac-Man and ghosts use the NTSC
+stage speed fractions and Blinky's stage-specific dot thresholds from the NES
+parameter tables. Ghosts use the reconstructed target formulas, turn ordering,
+mode timers, frightened countdown and flashing, home bouncing/exiting, and
+pellet/time-based release targets. The returning-eyes path and parts of movement/turn handling remain approximations.
+Title and maze colors are approximations because each background tile row
+supports only two colors.
 
 ### Sound channels
 
-The SN76489 channels are assigned independently so a pellet chomp does not cut
-off the ghost warble or an event sound:
+The SN76489 channels are assigned independently:
 
-* tones 0 and 1: two-voice READY melody, transcribed from the NES note streams;
-* tone 0: alternating pellet chomp with a short volume decay during play;
-* tone 1: continuously sweeping ghost/frightened warble during play;
-* tone 2: ghost-eaten, fruit, extra-life, death, and level-clear effects;
+* tones 0 and 1: two-voice NES READY melody;
+* tone 0: alternating NES pellet sound streams during play;
+* tone 1: looping NES ghost-state streams, selected by returning eyes,
+  frightened mode, and the disassembly's pellet-count bands;
+* tone 2: NES ghost-eaten, fruit, extra-life, and death streams;
 * noise: currently muted.
 
-The event effects share tone 2, so a newer event replaces an earlier event
-on that channel. The READY melody uses the NES note durations and pitches with approximate PSG
-timbres. Other effects are SG-1000 approximations, not the original APU streams.
+The note and duration streams are checked against the NES asset manifest and
+compiled by `scripts/sg1000/nes_audio.py`. APU timer values are translated to
+PSG tone divisors. The original channel arbitration, triangle waveform, pulse
+duty, sweep, envelopes and control-register behavior cannot be reproduced
+exactly by the SN76489: the port uses fixed PSG volumes, folds event sounds
+onto one channel, and approximates sustained notes. Newer event sounds replace
+older ones. The original READY and effect streams therefore sound closer but
+are not bit-identical NES APU output.
 
 The prototype has been exercised with a Z80 emulator and a minimal VDP/PSG
 model, not on real SG-1000 hardware or in a full system emulator.
@@ -86,8 +92,8 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m unittest discover -s tests/sg100
 
 * `src/sg1000/player.asm` implements Pac-Man movement, pellets, score output,
   camera, sprite and chomp.
-* `src/sg1000/ghosts.asm` implements simplified ghost movement, collisions,
-  frightened sprites and sprite-priority rotation.
+* `src/sg1000/ghosts.asm` implements ghost targeting, release, house movement,
+  collisions, frightened sprites and sprite-priority rotation.
 * `src/sg1000/fruit.asm` manages the bonus fruit, scoring and sprite layers.
 * `src/sg1000/game.asm` manages lives, high score, game over and level reset;
   `src/sg1000/sound.asm` manages the siren and event-sound channels.

@@ -6,6 +6,7 @@ import unittest
 from test_maze_viewer import ROOT, advance, make_machine
 from build_maze_viewer import assets_from_rom, build, fruit_sprite_patterns, ghost_sprite_patterns, title_assets
 from convert_chr import convert
+from nes_audio import STREAMS, psg_events
 
 
 class GameplayTests(unittest.TestCase):
@@ -61,9 +62,9 @@ class GameplayTests(unittest.TestCase):
 
     def test_ghosts_move_and_psg_voices_are_independent(self):
         cpu, vdp = self.new_game()
-        start_y = cpu.memory[0xc291]
+        start = tuple(cpu.memory[0xc290:0xc292])
         advance(cpu, vdp, 30)
-        self.assertNotEqual(cpu.memory[0xc291], start_y)
+        self.assertNotEqual(tuple(cpu.memory[0xc290:0xc292]), start)
         self.assertEqual(vdp.ram[14336 + 288:14336 + 608], ghost_sprite_patterns(self.chr_data))
         self.assertEqual(vdp.ram[14336 + 608:14336 + 928], ghost_sprite_patterns(self.chr_data, eyes=True))
         self.assertEqual(vdp.ram[6948], 208)
@@ -115,7 +116,7 @@ class GameplayTests(unittest.TestCase):
         cpu.memory[0xc290], cpu.memory[0xc291] = 52, 68
         cpu.memory[0xc292], cpu.memory[0xc293] = 1, 0
         advance(cpu, vdp, 1)
-        self.assertEqual(cpu.memory[0xc27f], 165)
+        self.assertEqual(cpu.memory[0xc27f], 225)
         self.assertEqual(cpu.memory[0xc2d4], 1)
         self.assertEqual(cpu.memory[0xc292], 3)  # reversed on energizer
         self.assertEqual(cpu.memory[0xc000 + 3 * 22 + 2], 7)
@@ -139,7 +140,8 @@ class GameplayTests(unittest.TestCase):
             cpu.memory[0xc290 + ghost * 8 + 3] = 0
             cpu.memory[0xc290 + ghost * 8 + 2] = 1
             cpu.memory[0xc290 + ghost * 8 + 5] = 0
-        cpu.memory[0xc2d0], cpu.memory[0xc2d1], cpu.memory[0xc2d2] = 0, 1, 59
+            cpu.memory[0xc290 + ghost * 8 + 6] = 0
+        cpu.memory[0xc2d0], cpu.memory[0xc2d1], cpu.memory[0xc2d2] = 0, 0, 59
         cpu.memory[0xc27f] = 5
         advance(cpu, vdp, 1)
         self.assertEqual(cpu.memory[0xc2d0], 0)
@@ -150,12 +152,103 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc2d1], 20)
         self.assertEqual([cpu.memory[0xc292 + n * 8] for n in range(4)], [3] * 4)
 
+    def test_scatter_phase_does_not_reverse_and_personal_latch_persists(self):
+        cpu, vdp = self.new_game()
+        for ghost in range(4):
+            cpu.memory[0xc293 + ghost * 8] = 0
+            cpu.memory[0xc292 + ghost * 8] = 1
+            cpu.memory[0xc295 + ghost * 8] = 0
+            cpu.memory[0xc296 + ghost * 8] = 0
+        cpu.memory[0xc2d0], cpu.memory[0xc2d1], cpu.memory[0xc2d2] = 1, 0, 59
+        cpu.memory[0xc27c], cpu.memory[0xc27f] = 20, 0
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc311], 1)  # threshold latch
+        self.assertEqual(cpu.memory[0xc2d0], 2)
+        self.assertEqual(cpu.memory[0xc2d1], 7)
+        self.assertEqual([cpu.memory[0xc292 + n * 8] for n in range(4)], [1] * 4)
+        cpu.memory[0xc27c] = 19
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc311], 1)
+
     def test_frightened_long_timer_rollover(self):
         cpu, vdp = self.new_game()
         cpu.memory[0xc27f], cpu.memory[0xc2d4] = 1, 1
         advance(cpu, vdp, 1, ghosts_disabled=True)
         self.assertEqual(cpu.memory[0xc27f], 255)
         self.assertEqual(cpu.memory[0xc2d4], 0)
+
+    def test_nes_frightened_counter_and_zero_duration_stage(self):
+        cpu, vdp = self.new_game()
+        cpu.memory[0xc27d] = 17  # zero-second profile still lasts 30 frames
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 28, 1
+        cpu.memory[0xc000 + 3 * 22 + 2] = 1
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc27f], 30)
+        self.assertEqual(cpu.memory[0xc312], 30)
+        advance(cpu, vdp, 30, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc27f], 0)
+        self.assertEqual(cpu.memory[0xc312], 0)
+        # A second energizer while active preserves the NES subsecond divider.
+        cpu.memory[0xc27d], cpu.memory[0xc27f], cpu.memory[0xc312] = 1, 100, 16
+        cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
+        cpu.memory[0xc000 + 3 * 22 + 2] = 1
+        advance(cpu, vdp, 1, ghosts_disabled=True)
+        self.assertEqual(cpu.memory[0xc312], 17)
+        self.assertEqual((cpu.memory[0xc27f], cpu.memory[0xc2d4]), (208, 1))
+
+    def test_real_pellet_and_fruit_streams_drive_independent_psg_channels(self):
+        cpu, vdp = self.new_game()
+        for n in range(4):
+            cpu.memory[0xc293 + n * 8] = 255
+        # The first pellet leaves an odd remaining count and requests slot 05.
+        cpu.memory[0xc27c] = 192
+        cpu.memory[0xc000 + 22 + 2] = 3
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 12, 1
+        start = len(vdp.psg)
+        advance(cpu, vdp, 9, ghosts_disabled=True)
+        writes = vdp.psg[start:]
+        events = psg_events(STREAMS['sfx_pellet_odd'])
+        expected = [0x80 | events[i + 1] for i in range(0, len(events) - 1, 3)]
+        self.assertEqual([x for x in writes if 0x80 <= x <= 0x8f], expected)
+        self.assertIn(159, writes)  # pellet stream terminates and mutes
+        self.assertIn(185, writes)  # looping NES siren remains on tone 1
+        # Fruit request runs its original rapidly changing note stream on tone 2.
+        cpu.memory[0xc282], cpu.memory[0xc283] = 40, 4
+        start = len(vdp.psg)
+        advance(cpu, vdp, 12, ghosts_disabled=True)
+        writes = vdp.psg[start:]
+        events = psg_events(STREAMS['sfx_fruit'])
+        expected = [0xc0 | events[i + 1] for i in range(0, 12 * 3, 3)]
+        self.assertEqual([x for x in writes if 0xc0 <= x <= 0xcf], expected)
+
+    def test_nes_level_speed_fractions_and_blinky_thresholds(self):
+        cpu, vdp = self.new_game()
+        for n in range(1, 4):
+            cpu.memory[0xc293 + n * 8] = 255
+        cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        for level, remaining, expected_fraction in ((1, 192, 144), (1, 20, 160),
+                                                     (1, 10, 176), (15, 100, 0),
+                                                     (15, 50, 16), (22, 192, 16)):
+            with self.subTest(level=level, remaining=remaining):
+                cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
+                cpu.memory[0xc27d], cpu.memory[0xc27c] = level, remaining
+                cpu.memory[0xc27f] = 0
+                cpu.memory[0xc290], cpu.memory[0xc291], cpu.memory[0xc292] = 52, 68, 2
+                cpu.memory[0xc293], cpu.memory[0xc295], cpu.memory[0xc296] = 0, 0, 0
+                advance(cpu, vdp, 1)
+                self.assertEqual(cpu.memory[0xc295], expected_fraction)
+        # Pac-Man's leftward fractional accumulator borrows the selected speed.
+        for tile, scared, expected in ((7, 0, 80), (3, 0, 96), (1, 0, 128),
+                                       (7, 4, 48), (3, 4, 64)):
+            with self.subTest(tile=tile, scared=scared):
+                cpu.memory[0xc27d], cpu.memory[0xc27f] = 1, scared
+                cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 12, 1
+                cpu.memory[0xc300] = 0
+                cpu.memory[0xc000 + 22 + 2] = tile
+                for n in range(4):
+                    cpu.memory[0xc293 + n * 8] = 255
+                advance(cpu, vdp, 1, ghosts_disabled=True)
+                self.assertEqual(cpu.memory[0xc300], expected)
 
     def test_ready_music_plays_before_gameplay(self):
         cpu, vdp = make_machine(self.rom)
@@ -175,6 +268,40 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(cpu.memory[0xc281], 0)
         self.assertEqual(cpu.memory[0xc2f0], 0)
 
+    def test_nes_house_release_targets_and_idle_release(self):
+        cpu, vdp = self.new_game()
+        # Round 1: Pinky is exiting, Inky and Clyde wait; 30 and 90 dots
+        # are the global release targets from the disassembly.
+        self.assertEqual([cpu.memory[0xc296 + n * 8] for n in range(4)], [0, 4, 3, 3])
+        self.assertEqual((cpu.memory[0xc30e], cpu.memory[0xc30f]), (30, 90))
+        cpu.memory[0xc27c] = 163
+        cpu.memory[0xc262], cpu.memory[0xc263], cpu.memory[0xc264] = 20, 12, 1
+        cpu.memory[0xc000 + 22 + 2] = 3
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc27c], 162)
+        self.assertEqual(cpu.memory[0xc2a6], 4)  # Inky exits on dot 30
+        self.assertEqual(cpu.memory[0xc30e], 90)
+        self.assertEqual(cpu.memory[0xc30c], 1)  # dot reset, then this frame's tick
+        # Four NES release seconds are 384 ticks; force the counter to expire.
+        cpu.memory[0xc30c], cpu.memory[0xc30d] = 127, 1  # 383
+        cpu.memory[0xc000 + 22 + 2] = 7
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc2ae], 4)  # Clyde exits on timeout
+        self.assertEqual((cpu.memory[0xc30c], cpu.memory[0xc30d]), (0, 0))
+
+    def test_death_release_targets_are_relative_to_eaten_dots(self):
+        cpu, vdp = self.new_game()
+        cpu.memory[0xc27c] = 150  # 42 already eaten
+        cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
+        cpu.memory[0xc290], cpu.memory[0xc291] = 20, 28
+        cpu.memory[0xc293], cpu.memory[0xc296] = 0, 0
+        cpu.memory[0xc27f] = 0
+        advance(cpu, vdp, 1)
+        self.assertEqual(cpu.memory[0xc27e], 2)
+        self.assertEqual([cpu.memory[0xc296 + n * 8] for n in range(4)], [0, 3, 3, 3])
+        self.assertEqual(list(cpu.memory[0xc30e:0xc311]), [49, 59, 74])
+
     def test_eyes_follow_a_route_to_house_from_maze(self):
         cpu, vdp = self.new_game()
         for n in range(1, 4):
@@ -183,10 +310,11 @@ class GameplayTests(unittest.TestCase):
         cpu.memory[0xc000 + 3 * 22 + 2] = 7
         cpu.memory[0xc290], cpu.memory[0xc291] = 52, 68
         cpu.memory[0xc292], cpu.memory[0xc293], cpu.memory[0xc296] = 1, 0, 1
-        advance(cpu, vdp, 150)
-        self.assertEqual(cpu.memory[0xc296], 2)
-        self.assertEqual((cpu.memory[0xc290], cpu.memory[0xc291]), (92, 84))
-        self.assertGreater(cpu.memory[0xc293], 0)
+        advance(cpu, vdp, 70)
+        self.assertEqual(cpu.memory[0xc296], 4)  # exiting after entering house
+        self.assertEqual(cpu.memory[0xc290], 92)
+        advance(cpu, vdp, 60)
+        self.assertIn(cpu.memory[0xc296], (0, 2))  # back to active maze movement
 
     def test_fruit_threshold_scoring_layers_and_expiry(self):
         cpu, vdp = self.new_game()
@@ -241,11 +369,13 @@ class GameplayTests(unittest.TestCase):
         self.assertEqual(vdp.ram[6923] & 15, 15)
         cpu.memory[0xc290], cpu.memory[0xc291] = 92, 84
         advance(cpu, vdp, 1)
-        self.assertEqual(cpu.memory[0xc296], 2)
-        self.assertEqual(cpu.memory[0xc293], 60)
-        cpu.memory[0xc293], cpu.memory[0xc27f] = 0, 0
+        self.assertEqual(cpu.memory[0xc296], 5)  # enters the house as eyes
+        cpu.memory[0xc27f] = 100
         cpu.memory[0xc262], cpu.memory[0xc263] = 20, 28
         cpu.memory[0xc000 + 3 * 22 + 2] = 7
+        advance(cpu, vdp, 65)
+        self.assertEqual(cpu.memory[0xc296], 2)  # recovered, immune for this energizer
+        cpu.memory[0xc27f] = 0
         advance(cpu, vdp, 1)
         self.assertEqual(cpu.memory[0xc296], 0)
 

@@ -13,6 +13,7 @@ import tempfile
 
 from convert_chr import convert
 from decode_maze import decode
+from nes_audio import STREAMS, psg_events
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -293,6 +294,7 @@ def build(maze, chr_data, output, assembler='pyz80', *, logo, title_palette):
                        (ROOT / 'src/sg1000/sound.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/fruit.asm').read_text() + '\n' +
                        (ROOT / 'src/sg1000/score.asm').read_text() + '\n' +
+                       ''.join(table(name, psg_events(data)) for name, data in STREAMS.items()) +
                        table('maze_data', maze) + table('ghost_eye_routes', eye_routes(maze)) + table('pattern_data', patterns) +
                        table('color_data', colors) +
                        table('title_pattern_data', title_patterns) +

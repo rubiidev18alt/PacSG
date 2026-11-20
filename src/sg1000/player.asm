@@ -4,8 +4,8 @@
 ; scratch, C26B chomp timer; C270-C275 score digits (least significant first, 10 points/unit),
 ; C276-C27B pending digits. Coordinates are relative to the 22x27 maze.
 ;
-; This is not the complete NES movement engine: it uses 3/4 pixel per frame,
-; tile-center collision/turns, simplified tunnel wrapping, and a scrolling
+; This is not the complete NES movement engine: it uses level/tile/mode speed
+; fractions from the NES tables, tile-center turns, simplified tunnel wrapping, and a scrolling
 ; viewport. Chomp is approximated on the SN76489. Ghosts and round logic live
 ; in separate modules; this is not a complete NES engine translation.
 
@@ -22,6 +22,8 @@ player_init:
     xor a
     ld (49761),a
     ld (49771),a
+    ld (49920),a              ; X and Y movement fractions
+    ld (49921),a
     ld a,159                  ; mute PSG tone and noise channels
     out (127),a
     ld a,191
@@ -45,16 +47,6 @@ player_frame:
     jr z,player_sound_done
     dec a
     ld (49771),a
-    jr z,player_sound_mute
-    ld b,a
-    ld a,8
-    sub b
-    or 144                    ; short channel-0 volume decay
-    out (127),a
-    jr player_sound_done
-player_sound_mute:
-    ld a,159                  ; silence channel 0 after the chomp
-    out (127),a
 player_sound_done:
     ; NES priority is right, left, down, up. No input retains direction.
     in a,(220)
@@ -85,9 +77,43 @@ player_store_request:
     ld a,(49761)
     inc a
     ld (49761),a
-    and 3
-    jp z,player_frame_sprite   ; 3 pixels per 4 frames
-
+    call player_select_speed
+    ld (49922),a              ; selected fraction (zero means 1 pixel)
+    ; Pellet processing is independent of the fractional movement budget.
+    ld a,(49762)
+    and 7
+    cp 4
+    jr nz,player_budget
+    ld a,(49763)
+    and 7
+    cp 4
+    jr nz,player_budget
+    call player_consume_tile
+ player_budget:
+    ld a,(49922)
+    or a
+    jr z,player_has_budget    ; 0100h = one whole pixel each frame
+    ld b,a
+    ld a,(49764)
+    and 1
+    ld hl,49921              ; vertical fraction
+    jr z,player_budget_axis
+    dec hl                   ; horizontal fraction
+ player_budget_axis:
+    ld a,(49764)
+    cp 2
+    jr nc,player_budget_positive
+    ld a,(hl)
+    sub b                    ; left/up borrow
+    ld (hl),a
+    jp nc,player_frame_sprite
+    jr player_has_budget
+ player_budget_positive:
+    ld a,(hl)
+    add a,b                  ; right/down carry
+    ld (hl),a
+    jp nc,player_frame_sprite
+ player_has_budget:
     ; Exact 8-pixel cell centers are (4,4) modulo 8.
     ld a,(49762)
     and 7
@@ -97,7 +123,6 @@ player_store_request:
     and 7
     cp 4
     jr nz,player_mid_tile
-    call player_consume_tile
     ld a,(49765)
     call player_can_move
     jr nz,player_check_current
@@ -172,6 +197,68 @@ player_after_move:
 player_frame_sprite:
     call player_draw_sprite
     ret
+
+; Select the NTSC stage parameter block and current floor/dot/energizer
+; speed. 0 encodes the 0100h whole-pixel entries in levels 6 and later.
+player_select_speed:
+    ld a,(49762)
+    srl a
+    srl a
+    srl a
+    ld e,a
+    ld a,(49763)
+    srl a
+    srl a
+    srl a
+    ld d,a
+    call player_map_address
+    ld a,(hl)
+    ld c,0                   ; floor
+    cp 1
+    jr z,player_speed_power
+    cp 2
+    jr z,player_speed_power
+    cp 3
+    jr z,player_speed_dot
+    cp 9
+    jr nz,player_speed_tile_ready
+ player_speed_dot:
+    inc c
+    jr player_speed_tile_ready
+ player_speed_power:
+    ld c,2
+ player_speed_tile_ready:
+    ld a,(49791)
+    or a
+    jr z,player_speed_mode_ready
+    ld a,c
+    add a,3
+    ld c,a
+ player_speed_mode_ready:
+    ld a,(49789)
+    cp 4
+    jr nc,player_speed_level_four
+    ld b,0                  ; rounds 1-3 use the same player speeds
+    jr player_speed_block_ready
+ player_speed_level_four:
+    ld b,6                  ; rounds 4-5
+    cp 6
+    jr c,player_speed_block_ready
+    ld b,12                 ; rounds 6 and later
+ player_speed_block_ready:
+    ld a,b
+    add a,c
+    ld e,a
+    ld d,0
+    ld hl,player_speed_table
+    add hl,de
+    ld a,(hl)
+    ret
+; Normal floor, pellet, power; frightened floor, pellet, power.
+player_speed_table:
+    defb 176,160,128,208,192,160
+    defb 224,208,176,240,224,192
+    defb 0,240,208,0,240,208
 
 ; A = requested direction. Z if neighbor tile is passable. Uses NES passability
 ; rule (tile & F0h)==0 and restricts horizontal edge wrap to tunnel row 13.
@@ -304,6 +391,9 @@ player_regular_pellet:
 player_clear_pellet:
     ld (hl),a
     ld (49768),a
+    xor a
+    ld (49932),a             ; eating a dot resets house release inactivity
+    ld (49933),a
     ld a,(49788)
     or a
     jr z,player_dot_count_done
@@ -319,22 +409,9 @@ player_clear_pellet:
     ld a,1
     ld (49846),a              ; complete the round after this frame
 player_dot_count_done:
-    ; Short alternating approximate chomp on SN76489 tone channel 0.
+    ; Schedule the alternating NES pellet stream on PSG tone 0.
     ld a,(49788)
-    and 1
-    jr z,player_chomp_low
-    ld a,140                  ; tone divisor 172
-    out (127),a
-    ld a,10
-    jr player_chomp_high_byte
-player_chomp_low:
-    ld a,130                  ; tone divisor 210
-    out (127),a
-    ld a,13
-player_chomp_high_byte:
-    out (127),a
-    ld a,148                  ; channel 0 volume
-    out (127),a
+    call sound_start_chomp
     ld a,6
     ld (49771),a
     call game_commit_score

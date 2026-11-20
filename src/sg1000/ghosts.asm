@@ -1,6 +1,7 @@
 ; Four SG-1000 ghost approximations. Each C290 record is eight bytes:
 ; X, Y, direction, release/respawn wait, color, speed fraction,
-; state (0 normal, 1 returning eyes, 2 recovered immune), reserved.
+; state (0 active, 1 returning eyes, 2 recovered immune, 3 house,
+; 4 exiting, 5 entering), house direction/eyes-release flag.
 ; Ghosts use two NES-derived sprite masks: colored body plus white eyes.
 ; The TMS9918's four-sprites-per-scanline limit is mitigated by rotating ghost
 ; priority, but layered sprites can flicker/drop when many actors overlap.
@@ -17,19 +18,122 @@ ghost_init:
     xor a
     ld (49872),a              ; scatter/chase phase
     ld (49874),a              ; 60 Hz seconds divider
+    ld (49932),a              ; release inactivity ticks, low/high
+    ld (49933),a
+    ld (49934),a              ; current and next global release targets
+    ld (49935),a
+    ld (49936),a
+    ld (49937),a              ; personal release / scatter mask latch
+    ld (49938),a              ; NES frightened 60-frame divider
+    call ghost_release_init
     call ghost_load_phase_duration
     ret
 
 ghost_initial_records:
-    defb 52,68,1,0,8,0,0,0      ; red
-    defb 132,68,3,45,13,0,0,0   ; pink
-    defb 52,148,1,90,7,0,0,0    ; cyan
-    defb 132,148,3,135,10,0,0,0 ; orange
+    ; NES world positions minus four pixels in each axis.
+    defb 92,84,1,0,8,0,0,0      ; Blinky, outside house
+    defb 92,108,0,0,13,0,3,0   ; Pinky
+    defb 84,108,0,0,7,0,3,0    ; Inky
+    defb 100,108,0,0,10,0,3,0  ; Clyde
 
-; NES per-round frightened durations in 60-Hz frames. A nonzero high
-; component counts additional 255-frame blocks, so the low countdown stays
-; nonzero throughout frightened mode. Later rounds with duration zero do not
-; make ghosts edible in this prototype.
+; NES release-target quads: initial active count and pellet counts eaten.
+; After a death use the NES special case, relative to already eaten dots.
+ghost_release_init:
+    ld a,(49788)
+    cp 192
+    jr z,ghost_release_fresh
+    ld b,a
+    ld a,192
+    sub b
+    ld b,a
+    add a,7
+    ld (49934),a
+    ld a,b
+    add a,17
+    ld (49935),a
+    ld a,b
+    add a,32
+    ld (49936),a
+    ret
+ ghost_release_fresh:
+    ld a,(49789)
+    cp 2
+    jr z,ghost_release_round_two
+    jr nc,ghost_release_later
+    ld a,30
+    ld (49934),a
+    ld a,90
+    ld (49935),a
+    ld a,4
+    ld (49822),a             ; Pinky starts exiting
+    ret
+ ghost_release_round_two:
+    ld a,50
+    ld (49934),a
+    ld a,4
+    ld (49822),a
+    ld (49830),a
+    ret
+ ghost_release_later:
+    ld a,4
+    ld (49822),a
+    ld (49830),a
+    ld (49838),a
+    ret
+
+; One release at a matching global dot target or 3/4 * 96 idle frames.
+ghost_release_tick:
+    ld a,(49934)
+    or a
+    jr z,ghost_release_clock
+    ld b,a
+    ld a,(49788)
+    add a,b
+    cp 192
+    jr nz,ghost_release_clock
+    call ghost_release_next
+    ld a,(49935)
+    ld (49934),a
+    ld a,(49936)
+    ld (49935),a
+    xor a
+    ld (49936),a
+ ghost_release_clock:
+    ld hl,(49932)
+    inc hl
+    ld (49932),hl
+    ld de,384               ; NES 96-tick divider * 4 seconds on rounds 1-2
+    ld a,(49789)
+    cp 3
+    jr c,ghost_release_compare_time
+    ld de,288               ; 3 seconds on later rounds
+ ghost_release_compare_time:
+    or a
+    sbc hl,de
+    ret c
+    ld hl,0
+    ld (49932),hl
+    jp ghost_release_next
+
+ghost_release_next:
+    ld ix,49816
+    ld b,3
+ ghost_release_scan:
+    ld a,(ix+6)
+    cp 3
+    jr nz,ghost_release_scan_next
+    ld (ix+6),4
+    ld (ix+7),0
+    ret
+ ghost_release_scan_next:
+    ld de,8
+    add ix,de
+    djnz ghost_release_scan
+    ret
+
+ ; Convert NES frightened seconds/divider into the prototype's 255-frame
+; blocks. The NES counts through zero, and a zero-duration stage initializes
+; its divider to 30, giving a brief half-second frightened window.
 ghost_start_frightened:
     xor a
     ld (49792),a              ; reset ghost chain
@@ -39,27 +143,53 @@ ghost_start_frightened:
     ld a,23
  ghost_fright_round_ok:
     dec a
-    add a,a
     ld e,a
     ld d,0
-    ld hl,ghost_fright_durations
+    ld hl,ghost_fright_seconds
     add hl,de
     ld a,(hl)
-    ld (49791),a
-    inc hl
-    ld a,(hl)
-    ld (49876),a
-    ld a,(49791)
     or a
-    ret z
+    jr nz,ghost_fright_have_duration
+    ld a,30
+    ld (49938),a
+    xor a
+ ghost_fright_have_duration:
+    inc a
+    ld b,a
+    ld hl,0
+    ld de,60
+ ghost_fright_seconds_loop:
+    add hl,de
+    djnz ghost_fright_seconds_loop
+    ld a,(49938)
+    ld c,a
+    ld b,0
+    or a
+    sbc hl,bc
+    ld b,0
+ ghost_fright_split_loop:
+    ld de,255
+    or a
+    sbc hl,de
+    jr c,ghost_fright_split_done
+    inc b
+    jr ghost_fright_split_loop
+ ghost_fright_split_done:
+    add hl,de
+    ld a,l
+    or a
+    jr nz,ghost_fright_store
+    dec b
+    ld a,255
+ ghost_fright_store:
+    ld (49791),a
+    ld a,b
+    ld (49876),a
     jp ghost_frighten
-; Low frames, number of additional 255-frame blocks; seconds per NES table:
-; 7,6,4,3,2,5,2,2,1,5,2,1,1,3,1,1,0,1,0,0,0,0,0.
-ghost_fright_durations:
-    defb 165,1,105,1,240,0,180,0,120,0,45,1
-    defb 120,0,120,0,60,0,45,1,120,0,60,0
-    defb 60,0,180,0,60,0,60,0,0,0,60,0
-    defb 0,0,0,0,0,0,0,0,0,0
+; Seconds from the stage-index stream (counter includes zero).
+ghost_fright_seconds:
+    defb 7,6,4,3,2,5,2,2,1,5,2,1
+    defb 1,3,1,1,0,1,0,0,0,0,0
 
 ; Reverse released ghosts immediately on a power pellet, as the NES does.
 ghost_frighten:
@@ -84,6 +214,7 @@ ghost_reverse_all:
 
 ghost_frame:
     call ghost_mode_tick
+    call ghost_release_tick
     ld a,(49762)
     ld (49805),a
     ld a,(49763)
@@ -102,6 +233,12 @@ ghost_frame:
     jp ghost_next
  ghost_released:
     ld a,(ix+6)
+    cp 3
+    jp z,ghost_house_bounce
+    cp 4
+    jp z,ghost_house_exit
+    cp 5
+    jp z,ghost_house_enter
     cp 2
     jr nz,ghost_check_returning
     ld a,(49791)
@@ -118,19 +255,28 @@ ghost_frame:
     ld a,(ix+1)
     cp 84
     jp nz,ghost_move
-    ; Eyes reached the house entrance. Wait briefly before re-emerging.
-    ld (ix+6),2
-    ld (ix+3),60
-    ld (ix+2),1
+    ; Eyes enter through the door, then re-emerge via the house handler.
+    ld (ix+6),5
+    ld (ix+7),1
     jp ghost_next
  ghost_fractional_move:
-    ; NES-style fixed-point fraction: accumulate each ghost's stage/mode
-    ; speed and move one pixel on carry (late-stage speeds are capped at 1).
+    ; Fixed-point speed has an integer byte and a fractional byte.
     call ghost_speed_fraction
     add a,(ix+5)
     ld (ix+5),a
-    jp nc,ghost_check_collision
+    ld b,0
+    jr nc,ghost_no_fractional_carry
+    inc b
+ ghost_no_fractional_carry:
+    ld a,(49928)
+    add a,b
+    jp z,ghost_check_collision
+    ld (49927),a
+    jp ghost_move_substep
  ghost_move:
+    ld a,2                    ; original returning-eyes speed: two pixels
+    ld (49927),a
+ ghost_move_substep:
     ; Reuse the NES-style neighbor probe with ghost coordinates temporarily
     ; installed, restoring the real Pac-Man coordinates before collision.
     ld a,(ix+0)
@@ -183,12 +329,28 @@ ghost_frame:
     dec a
  ghost_store_x:
     ld (ix+0),a
-    jr ghost_restore_position
+    jr ghost_step_complete
  ghost_step_up:
     dec (ix+1)
-    jr ghost_restore_position
+    jr ghost_step_complete
  ghost_step_down:
     inc (ix+1)
+ ghost_step_complete:
+    ld a,(49927)
+    dec a
+    ld (49927),a
+    jr z,ghost_restore_position
+    ld a,(ix+6)
+    cp 1
+    jr nz,ghost_more_substeps
+    ld a,(ix+0)
+    cp 92
+    jr nz,ghost_more_substeps
+    ld a,(ix+1)
+    cp 84
+    jr z,ghost_restore_position
+ ghost_more_substeps:
+    jp ghost_move_substep
  ghost_restore_position:
     ld a,(49805)
     ld (49762),a
@@ -212,62 +374,139 @@ ghost_frame:
     call ghost_draw
     ret
 
-; Normal, frightened and tunnel fractions from the NTSC level profiles.
-; Blinky's level-one pellet thresholds use the two original boosted speeds.
-ghost_speed_fraction:
-    ld a,(ix+6)
+; House movement is half a pixel per frame, independent of maze wall probes.
+; In-house ghosts bounce between the NES bounds 69h..70h (minus four).
+ghost_house_bounce:
+    ld a,(49761)
+    and 1
+    jp nz,ghost_next
+    ld a,(ix+7)
     or a
-    jr nz,ghost_speed_normal_check
-    ld a,(49791)
-    or a
-    jr nz,ghost_slow_fraction
- ghost_speed_normal_check:
+    jr nz,ghost_house_bounce_down
+    dec (ix+1)
     ld a,(ix+1)
-    cp 108                    ; tunnel row
-    jr nz,ghost_normal_fraction
+    cp 101
+    jp nc,ghost_next
+    ld (ix+7),1
+    ld (ix+2),2
+    jp ghost_next
+ ghost_house_bounce_down:
+    inc (ix+1)
+    ld a,(ix+1)
+    cp 108
+    jp c,ghost_next
+    ld (ix+7),0
+    ld (ix+2),0
+    jp ghost_next
+
+ghost_house_exit:
+    ld a,(49761)
+    and 1
+    jp nz,ghost_next
+    ld a,(ix+0)
+    cp 92
+    jr z,ghost_exit_up
+    jr c,ghost_exit_right
+    dec (ix+0)
+    ld (ix+2),1
+    jp ghost_next
+ ghost_exit_right:
+    inc (ix+0)
+    ld (ix+2),3
+    jp ghost_next
+ ghost_exit_up:
+    ld (ix+2),0
+    dec (ix+1)
+    ld a,(ix+1)
+    cp 84
+    jp nz,ghost_next
+    ld (ix+2),1
+    ld a,(ix+7)
+    or a
+    jr z,ghost_exit_initial
+    ld (ix+6),2             ; recovered ghosts are not frightened again
+    ld (ix+7),0
+    jp ghost_next
+ ghost_exit_initial:
+    ld (ix+6),0
+    jp ghost_next
+
+ghost_house_enter:
+    inc (ix+1)
+    inc (ix+1)
+    ld (ix+2),2
+    ld a,(ix+1)
+    cp 108
+    jp c,ghost_next
+    ld (ix+1),108
+    ld (ix+6),4
+    jp ghost_next
+
+; NTSC ghost speeds and Blinky thresholds copied from stage_parameters.asm.
+; Return fraction in A, integer pixels in C308h (49928).
+ghost_speed_fraction:
+    xor a
+    ld (49928),a
+    ld a,(ix+1)
+    cp 108
+    jr nz,ghost_check_fright_speed
     ld a,(ix+0)
     cp 44
     jr c,ghost_slow_fraction
     cp 140
     jr nc,ghost_slow_fraction
+ ghost_check_fright_speed:
+    ld a,(ix+6)
+    or a
+    jr nz,ghost_normal_fraction
+    ld a,(49791)
+    or a
+    jr nz,ghost_slow_fraction
  ghost_normal_fraction:
+    ; Choose one of five NTSC profiles and the level's threshold pair.
     ld a,(49789)
-    cp 1
-    jr nz,ghost_normal_other_rounds
+    cp 24
+    jr c,ghost_speed_round_ok
+    ld a,23
+ ghost_speed_round_ok:
+    dec a
+    ld e,a
+    ld d,0
+    ld hl,ghost_speed_stage_offsets
+    add hl,de
+    ld a,(hl)
+    ld (49929),a             ; offset into six-byte speed profile
     ld a,(49807)
     or a
-    jr nz,ghost_normal_level_one
+    jr nz,ghost_speed_normal_slot
+    ld hl,ghost_blinky_thresholds
+    add hl,de
+    add hl,de
     ld a,(49788)
-    cp 11
-    jr c,ghost_fast_second
-    cp 21
-    jr c,ghost_fast_first
- ghost_normal_level_one:
-    ld a,144                  ; 90h / 256 pixels per frame
-    ret
- ghost_fast_first:
-    ld a,160
-    ret
- ghost_fast_second:
-    ld a,176
-    ret
- ghost_normal_other_rounds:
-    cp 4
-    jr c,ghost_normal_round_two
-    cp 6
-    jr c,ghost_normal_round_four
-    cp 22
-    jr c,ghost_normal_round_six
-    ld a,255                  ; 0110h+ profiles capped at one pixel/frame
-    ret
- ghost_normal_round_two:
-    ld a,160
-    ret
- ghost_normal_round_four:
-    ld a,208
-    ret
- ghost_normal_round_six:
-    ld a,240
+    cp (hl)
+    jr nc,ghost_speed_normal_slot
+    inc hl
+    cp (hl)
+    ld a,2                   ; first boost offset
+    jr nc,ghost_speed_boost_ready
+    ld a,4                   ; second boost offset
+    jr ghost_speed_boost_ready
+ ghost_speed_normal_slot:
+    xor a
+ ghost_speed_boost_ready:
+    ld b,a
+    ld a,(49929)
+    add a,b
+    ld e,a
+    ld d,0
+    ld hl,ghost_speed_profiles
+    add hl,de
+    ld a,(hl)
+    inc hl
+    ld b,a
+    ld a,(hl)
+    ld (49928),a
+    ld a,b
     ret
  ghost_slow_fraction:
     ld a,(49789)
@@ -283,10 +522,53 @@ ghost_speed_fraction:
  ghost_slow_early:
     ld a,80
     ret
+; Per round, offsets for profile 0,1,2,3,4.
+ghost_speed_stage_offsets:
+    defb 0,6,6,12,12,18,18,18,18,18,18,18
+    defb 18,18,18,18,18,18,18,18,18,24,24
+; Comparison is remaining dots < threshold+1, first then second.
+ghost_blinky_thresholds:
+    defb 21,11,31,16,41,21,41,21,41,21
+    defb 51,26,51,26,51,26,61,31,61,31
+    defb 61,31,81,41,81,41,81,41,101,51,101,51
+    defb 101,51,101,51,101,51,101,51,101,51,101,51,101,51
+; normal, first boost, second boost as fraction/whole-byte pairs.
+ghost_speed_profiles:
+    defb 144,0,160,0,176,0
+    defb 160,0,176,0,192,0
+    defb 208,0,224,0,240,0
+    defb 240,0,0,1,16,1
+    defb 16,1,32,1,48,1
 
 ; Round-driven scatter/chase schedule based on the NES timer tables. The
 ; divider pauses during frightened mode. Reversals use the shared helper.
 ghost_mode_tick:
+    ; The NES latches slot zero into chase after a personal dot threshold.
+    ld a,(49937)
+    or a
+    jr nz,ghost_mode_latch_ready
+    ld a,(49789)
+    cp 24
+    jr c,ghost_latch_round_ok
+    ld a,23
+ ghost_latch_round_ok:
+    dec a
+    add a,a
+    ld e,a
+    ld d,0
+    ld hl,ghost_blinky_thresholds
+    add hl,de
+    ld a,(49788)
+    inc a
+    cp (hl)
+    jr z,ghost_set_personal_latch
+    inc hl
+    cp (hl)
+    jr nz,ghost_mode_latch_ready
+ ghost_set_personal_latch:
+    ld a,1
+    ld (49937),a
+ ghost_mode_latch_ready:
     ld a,(49791)
     or a
     ret nz
@@ -302,6 +584,7 @@ ghost_mode_tick:
     ld a,(49873)
     dec a
     ld (49873),a
+    cp 255                    ; NES decrements through zero before advancing
     ret nz
     ld a,(49872)
     cp 7
@@ -309,8 +592,10 @@ ghost_mode_tick:
     inc a
     ld (49872),a
     call ghost_load_phase_duration
-    call ghost_reverse_all
-    ret
+    ld a,(49872)
+    and 1
+    ret z                    ; NES only reverses on odd phase transitions
+    jp ghost_reverse_all
  ghost_mode_store_divider:
     ld (49874),a
     ret
@@ -388,6 +673,13 @@ ghost_choose_direction:
     ld a,(49872)
     and 1
     jr nz,ghost_chase_target
+    ld a,(49937)
+    or a
+    jr z,ghost_scatter_target
+    ld a,(49807)
+    or a
+    jr z,ghost_chase_target   ; latched mode mask is bit 0
+ ghost_scatter_target:
     ; NES corner targets in maze-local pixels (NES coordinates minus 4).
     ld a,(49807)
     add a,a
@@ -578,6 +870,9 @@ ghost_ranked_directions:
     ld a,b
     call player_can_move
     jr nz,ghost_candidate_reject
+    ld a,(hl)                 ; active NES ghosts accept tiles 00..07
+    and 248
+    jr nz,ghost_candidate_reject
     pop bc
     pop hl
     ld a,(49852)
@@ -664,8 +959,7 @@ ghost_collide:
 ghost_player_hit:
     xor a
     ld (49771),a
-    ld a,159
-    out (127),a              ; stop chomp when play pauses
+    call sound_stop_chomp    ; stop chomp when play pauses
     ld a,(49790)
     or a
     ret z
@@ -754,18 +1048,31 @@ ghost_draw_one:
     ld (49860),a              ; screen Y for the eye layer
     ld a,(ix+6)
     cp 1
+    jr z,ghost_draw_hide_body_y
+    cp 5
     ld a,(49860)
     jr nz,ghost_draw_body_y_ready
+    jr ghost_draw_hide_body_y
+ ghost_draw_hide_body_y:
     ld a,209                  ; returning eyes use only one scanline slot
  ghost_draw_body_y_ready:
     out (190),a
     ld a,(ix+4)
     ld b,a                    ; body color, later possibly early clock
     ld a,(ix+6)
+    cp 1
+    jr z,ghost_draw_eyes_body
+    cp 5
+    jr z,ghost_draw_eyes_body
+    cp 2
+    jr z,ghost_draw_color_ready
+    cp 4
+    jr nz,ghost_draw_check_frightened
+    ld a,(ix+7)
     or a
     jr z,ghost_draw_check_frightened
-    cp 1
-    jr nz,ghost_draw_color_ready
+    jr ghost_draw_color_ready
+ ghost_draw_eyes_body:
     ld b,0                    ; transparent body, keep eye sprite
     jr ghost_draw_color_ready
  ghost_draw_check_frightened:
@@ -777,7 +1084,7 @@ ghost_draw_one:
     or a
     jr nz,ghost_draw_color_ready
     ld a,(49791)
-    cp 60
+    cp 120                    ; NES flashes during the final two seconds
     jr nc,ghost_draw_color_ready
     ld a,(49761)
     and 8
@@ -804,8 +1111,18 @@ ghost_draw_one:
     inc c
  ghost_draw_phase_ready:
     ld a,(ix+6)
+    cp 1
+    jr z,ghost_draw_normal_pattern
+    cp 2
+    jr z,ghost_draw_normal_pattern
+    cp 5
+    jr z,ghost_draw_normal_pattern
+    cp 4
+    jr nz,ghost_draw_pattern_check_frightened
+    ld a,(ix+7)
     or a
     jr nz,ghost_draw_normal_pattern
+ ghost_draw_pattern_check_frightened:
     ld a,(49791)
     or a
     jr z,ghost_draw_normal_pattern

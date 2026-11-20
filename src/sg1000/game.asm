@@ -82,6 +82,14 @@ game_frame:
     ld a,(49791)
     or a
     jr z,game_power_tick_done
+    ld a,(49938)
+    inc a
+    cp 60
+    jr c,game_fright_divider_store
+    xor a
+ game_fright_divider_store:
+    ld (49938),a
+    ld a,(49791)
     dec a
     ld (49791),a
     jr nz,game_power_tick_done
@@ -165,6 +173,9 @@ game_reset_positions:
     ld (49791),a
     ld (49792),a
     ld (49876),a
+    ld (49938),a
+    ld (49920),a
+    ld (49921),a
     ld (49900),a
     ld (49901),a
     call ghost_init
@@ -175,8 +186,7 @@ game_next_level:
     xor a
     ld (49846),a
     ld (49771),a
-    ld a,159
-    out (127),a              ; stop chomp while the level-clear sound plays
+    call sound_stop_chomp    ; stop chomp while the level clears
     ld hl,maze_data
     ld de,49152
     call decode_maze
