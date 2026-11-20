@@ -178,14 +178,32 @@ class ViewerTests(unittest.TestCase):
         cpu.memory[0xc262], cpu.memory[0xc263] = 52, 164
         cpu.memory[0xc264], cpu.memory[0xc260], cpu.memory[0xc261] = 1, 3, 0
         vdp.pad = 0xfe
-        advance(cpu, vdp, 130)
-        self.assertEqual(cpu.memory[0xc262], 52)
-        self.assertLess(cpu.memory[0xc263], 100)
+        advance(cpu, vdp, 250)
+        self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (52, 12))
         self.assertEqual(cpu.memory[0xc260], 0)
         for row in range(24):
             start = 0xc000 + row * 22
             self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
                              bytes(cpu.memory[start:start + 22]))
+        self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
+        # Follow a real corridor all the way back to the bottom. The map and
+        # sprite must scroll together, and the HUD must not be overwritten.
+        vdp.pad = 0xfd  # down to row 23, where the corridor ends
+        advance(cpu, vdp, 300)
+        self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (52, 188))
+        self.assertEqual(cpu.memory[0xc260], 3)
+        vdp.pad = 0xfb  # left to column 2
+        advance(cpu, vdp, 60)
+        self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (20, 188))
+        vdp.pad = 0xfd  # down to row 25
+        advance(cpu, vdp, 40)
+        self.assertEqual((cpu.memory[0xc262], cpu.memory[0xc263]), (20, 204))
+        self.assertEqual(cpu.memory[0xc260], 3)
+        for row in range(24):
+            start = 0xc000 + (row + 3) * 22
+            self.assertEqual(vdp.ram[6144 + row * 32:6144 + row * 32 + 22],
+                             bytes(cpu.memory[start:start + 22]))
+        self.assertEqual(vdp.ram[6912], 204 - 3 * 8 - 9)
         self.assertEqual(vdp.ram[6144 + 6 * 32 + 22:6144 + 6 * 32 + 32], b'HIGH SCORE')
 
 

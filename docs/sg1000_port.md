@@ -10,8 +10,9 @@ cannot run directly on the SG-1000's Z80.
 
 Press either fire button at the title, then use joystick 1. Pac-Man continues
 in his current direction when the stick is released; he can reverse mid-tile
-and turns at tile centers. The camera follows him vertically because the
-27-row NES maze is taller than the TMS9918's 24-row screen. The prototype has
+and turns at tile centers. Near the top or bottom, the camera scrolls the maze
+vertically while the HUD stays fixed: the 27-row NES maze is taller than the
+TMS9918's 24-row screen. The prototype has
 wall checks, tunnel wrapping, pellet removal, 10/50-point scoring and a simple
 alternating SN76489 chomp. Power pellets do not trigger frightened mode yet.
 

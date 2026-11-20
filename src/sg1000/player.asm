@@ -379,26 +379,35 @@ player_score_write:
     out (190),a
     ret
 
-; Keep player near vertical center where possible, clamp the 27-row map to
-; the TMS9918's 24-row viewport. Only redraw when the tile-row window changes.
+; Scroll near the top/bottom edges, keeping the 16x16 player visible while
+; leaving the HUD fixed. The NES maze is 27 rows and the screen is 24, so
+; the only valid top-row offsets are 0..3. Move one row per threshold crossing.
 player_update_camera:
     ld a,(49763)
     srl a
     srl a
     srl a
-    sub 12
-    jr nc,player_camera_positive
-    xor a
-player_camera_positive:
-    cp 4
-    jr c,player_camera_check
-    ld a,3
-player_camera_check:
-    ld b,a
+    ld b,a                    ; Pac-Man's maze row
     ld a,(49760)
+    add a,4                   ; keep four rows above the player if possible
     cp b
-    ret z
-    ld a,b
+    jr c,player_camera_bottom
+    jr z,player_camera_bottom
+    ld a,(49760)
+    or a
+    ret z                     ; already at top
+    dec a
+    jr player_camera_change
+player_camera_bottom:
+    ld a,(49760)
+    add a,19                  ; keep four rows below the player if possible
+    cp b
+    ret nc
+    ld a,(49760)
+    cp 3
+    ret z                     ; already at bottom
+    inc a
+player_camera_change:
     ld (49760),a
     ld a,128
     out (191),a
